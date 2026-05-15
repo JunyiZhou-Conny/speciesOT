@@ -1,0 +1,195 @@
+Research Log — March 22, 2026
+==============================
+Stuff to Report:
+1. match_cells_by_celltype_tissues has no issues, the mismatch shown last time having 1000 mouse donors and 792 human donors are from
+
+
+
+
+2. match_cells_by_celltype_tissues
+- Josh points out that in the presented table, the counts of mouse and human seem to differ
+- I think the reason first of all is that we were only looking at human and mouse combined, wrong dataset
+
+3. Fix the gene alignment issues
+- Use biomart instead of mygene to match the exact procedure described in paper 13
+
+4. Which CellType to Leave out
+- I left out T Cell in my previous attempt, while keeping the more granular cells there
+- There are T-rex, there are CD4, CD8 etc types of immune cells
+- In my next round of experiment, perhaps leave out a more granular one such as CD8
+- Create a table where I can see the children and parents of T cell
+- I saw thymocytes, CD4, and CD8
+
+- T cell subsets are both well defined, sublabels
+- Other cell types to consider: monocytes, keeping conventional and leaving unconventional aside, there is intermediate as well
+- Macrophages: classic M1 (inflammatory), M2 (Regenerative)
+- We can conduct these 3 experiments
+- Maybe we can take a look into gene (laterlaterlater..)
+
+
+5. Phenomenom of Overfitting
+- scGen training is incredibly fast, and it could be we are feeding a relatively small amount of dataset
+-
+
+6. Reversed training, we should use mouse to predict human
+
+
+
+
+
+
+
+March 24th meeting:
+1. Make the MMD plot and finish it by Monday imitate the CellOT paper
+- Bar plots
+- Y-axis: MMD
+- X-axis: 3 models, Scgen, Cellot, Cellot swapped
+
+
+2. Visualize the r squared
+- Imitate the style in the scgen paper where we are showing how linearly related the predicted and the simulated genes are
+- DEG can also be done here, DEGs are important because it shows me those genes that change the most, it is easier to assume the drug does nothing, than to think the drug causes a drastic change
+
+
+March 25th meeting
+1. After looking at the UMAP result, one thing that is pretty confusing is why is the blue dots
+not clustering with each other, it is preferred that we have the orange and the green over
+2. It seems that MMD performs well for scGen, but not for CellOT\
+
+
+Next step:
+1. Visualize the UMAP with all the celltypes instead of just CD8, all human celltypes, maybe with mouse as well, really care about human celltypes, where the predicted huamn cells are at, so we know where they situate cd8 among all different cell types
+2. Be more careful defining the cell populations, for T cell, there are a lot of thymocytes, it would be useful to remove the CD8 celltype form thymocytes
+3. Work on in sample distributon, also visualize the celltypes on all of the umaps, get as good high performance as possible. Visualize
+4. increase dataset, try to get more cellsfor each species, what the highest node is, T cell is highest in mouse, and Change the more granular to less granular
+5. The greedy appraoch is try all appraoches
+
+6. Non atlas dataset
+correcting single-cell experimental batch effects
+batch effect include instrumental difference temprature, chemicals, experimental effect
+
+
+
+
+
+
+
+
+
+Understanding training, testing, and evaluation
+- Training updates model weights, loops over training rows only
+- Testing is also called validation, it is performed during training and periodically evaluate loss to choose the best checkpoint
+- OOD evaluation, run model on ood mouse T and compare against ood target human T
+Toy Example: train/test/ood/ignore split (CellOT toggle_ood, mode=ood)
+
+Assume:
+- 20 total cells
+- condition in {mouse, human}
+- holdout cell type = T
+- groupby = condition
+- test_size = 0.2
+- random_state fixed
+
+Step A) Initial split within each condition (80/20)
+- mouse (10 cells) -> 8 train, 2 test
+- human (10 cells) -> 8 train, 2 test
+So before holdout overwrite:
+- train = 16
+- test  = 4
+
+Step B) Holdout overwrite for T cells (toggle_ood, mode=ood)
+Holdout set (all T cells):
+- mouse: M3, M7
+- human: H2, H9
+
+Split holdout 50/50:
+- ood    = M3, H2
+- ignore = M7, H9
+
+These labels overwrite whatever they were in Step A.
+
+Final table:
+Cell  Condition  CellType   FinalSplit  UpdatesWeights?
+M1    mouse      B          train       YES
+M2    mouse      B          test        NO
+M3    mouse      T          ood         NO
+M4    mouse      Macro      train       YES
+M5    mouse      Macro      train       YES
+M6    mouse      B          test        NO
+M7    mouse      T          ignore      NO
+M8    mouse      B          train       YES
+M9    mouse      Macro      train       YES
+M10   mouse      B          train       YES
+H1    human      B          train       YES
+H2    human      T          ood         NO
+H3    human      Macro      train       YES
+H4    human      B          test        NO
+H5    human      Macro      train       YES
+H6    human      B          train       YES
+H7    human      Macro      test        NO
+H8    human      B          train       YES
+H9    human      T          ignore      NO
+H10   human      Macro      train       YES
+
+How each split is used:
+- train  : used in forward+backward pass; updates model weights
+- test   : validation during training (no gradient updates)
+- ood    : post-training OOD evaluation set (no gradient updates)
+- ignore : discarded (not used)
+
+Visual toy example: why "ignore" exists
+
+Goal:
+- Hold out T cells (cell_type = T)
+- Compare two settings fairly:
+  1) IID: model sees some T cells during training
+  2) OOD: model sees zero T cells during training
+
+Toy data (only T cells shown):
+--------------------------------
+Mouse T cells:  M1 M2 M3 M4
+Human T cells:  H1 H2 H3 H4
+Total heldout T cells = 8
+
+Split heldout T cells 50/50 once (fixed random split, be careful with imbalance): 
+------------------------------------------------------
+Half A: M1 M2 H1 H2
+Half B: M3 M4 H3 H4
+
+Now apply mode:
+
+MODE = IID
+----------
+Half A -> train for iid   (model is allowed to see these T cells)
+Half B -> ood     (used for final OOD evaluation)
+
+Result:
+train gets: M1 M2 H1 H2
+ood gets:   M3 M4 H3 H4
+
+MODE = OOD
+----------
+Half A -> ignore  (throw away so model sees zero T cells)
+Half B -> ood     (same OOD set as in IID mode)
+
+Result:
+ignore gets: M1 M2 H1 H2
+ood gets:    M3 M4 H3 H4
+
+
+Key point:
+----------
+The OOD evaluation set is kept IDENTICAL across modes (always Half B).
+Only Half A changes role:
+- IID mode: Half A helps training
+- OOD mode: Half A is discarded (ignore)
+
+That is why "ignore" exists:
+it prevents leakage in OOD mode while keeping the OOD test set matched to IID mode.
+
+
+If we removed "ignore" in OOD mode:
+-----------------------------------
+All 8 T cells -> ood
+- Bigger OOD eval set (good for power)
+- But no longer directly comparable to IID mode under the original protocol.

@@ -1,0 +1,288 @@
+WHERE EVERYTHING LIVES
+----------------------
+Workspace root :  /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT
+Notebooks      :  speciesOT/baseline/analysis/
+Trained models :  cellot/cellot_gpu/results/atlas_full_<flavor>/<model>/cache/model.pt
+Datasets       :  cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/
+Wrapper scripts:  scripts/run_full_pipeline.sh, scripts/predict_new_input.sh
+
+ENVIRONMENTS (you must have both)
+---------------------------------
+  analysis   :  /n/home01/jzhou1125/miniforge3/envs/analysis    (preprocessing, plotting)
+  CellOT     :  /n/home01/jzhou1125/.conda/envs/CellOT          (model training, prediction)
+
+
+--------------------------------------------------------------------------------
+TWO PATHS THROUGH THE PIPELINE
+--------------------------------------------------------------------------------
+
+PATH A — START FROM SCRATCH (re-train everything)
+   cd /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT
+   bash scripts/run_full_pipeline.sh
+   Runs phases 1-5 below in sequence. Wall time ~60-90 min.
+
+PATH B — RUN A NEW INPUT THROUGH ALREADY-TRAINED MODELS
+   cd /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT
+   bash scripts/predict_new_input.sh /path/to/your_mouse.h5ad my_tag
+   Runs phase 3 + 4 (skips re-training). Wall time ~50 sec.
+
+
+================================================================================
+PHASE 1 — ATLAS DATA PREP (NO HOLDOUT)
+================================================================================
+
+WHAT YOU DO
+   cd /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT
+   /n/home01/jzhou1125/miniforge3/envs/analysis/bin/python -m nbconvert \
+       --to notebook --execute --inplace \
+       --ExecutePreprocessor.timeout=3600 \
+       speciesOT/baseline/analysis/15_data_prep_full_atlas_no_holdout.ipynb
+
+INPUT NEEDED
+   /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_muris/sampled_mouse_shared.h5ad
+   /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_sapiens/sampled_human_shared.h5ad
+
+OPERATIONS PERFORMED
+   - Promote .raw to .X for both species
+   - BioMart one-to-one mouse->human ortholog mapping (caches to scripts/.biomart_ortholog_cache.csv)
+   - Match cells by (cell_type, tissue) -> 6,495 mouse + 6,495 human paired cells
+   - Cast raw counts to int32 in .layers['counts']
+   - normalize_total + log1p
+   - Per flavor (seurat_v3, pearson_residuals): select top 1000 HVG using batch_key='species'
+   - Round-trip via CellOT env for anndata 0.7 compatibility
+
+EXPECTED OUTPUT
+   cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/hvg_seurat_v3_atlas_full_v07.h5ad
+   cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/hvg_pearson_residuals_atlas_full_v07.h5ad
+       Each: 12,990 cells (6,495 mouse + 6,495 human) x 1000 genes
+   speciesOT/baseline/analysis/atlas_full_outputs/hvg_atlas_full_<flavor>.csv
+       Full per-flavor HVG ranking
+   speciesOT/baseline/analysis/atlas_full_outputs/biomarker_selection_atlas_full.csv
+       Which of the 12 curated markers each flavor selected
+
+WALL TIME: ~5 minutes
+
+
+================================================================================
+PHASE 2 — TRAIN 4 MODELS
+================================================================================
+
+WHAT YOU DO
+   cd /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT
+   /n/home01/jzhou1125/miniforge3/envs/analysis/bin/python scripts/generate_atlas_full_configs.py
+   for flavor in seurat_v3 pearson_residuals; do
+     SC=$(sbatch --parsable sbatch/train/train_atlas_full_${flavor}_scgen.sbatch)
+     sbatch --dependency=afterok:$SC sbatch/train/train_atlas_full_${flavor}_impact_cellot.sbatch
+   done
+
+INPUT NEEDED
+   The 2 atlas datasets from Phase 1 (must exist).
+
+OPERATIONS PERFORMED
+   - Generate 4 config.yaml files + 4 sbatch scripts
+   - Submit scGen training (CPU, partition 'shared'): the autoencoder maps 1000 -> 50 -> 1000 dims
+   - After scGen finishes, submit IMPACT_CellOT training (GPU, partition 'gpu_requeue'):
+     learns OT map g(z) in scGen's 50-d latent space
+   - Both trainings save model.pt (best by val) and last.pt to cache/
+
+EXPECTED OUTPUT
+   cellot/cellot_gpu/results/atlas_full_seurat_v3/scgen/cache/model.pt
+   cellot/cellot_gpu/results/atlas_full_seurat_v3/impact_cellot/cache/model.pt
+   cellot/cellot_gpu/results/atlas_full_pearson_residuals/scgen/cache/model.pt
+   cellot/cellot_gpu/results/atlas_full_pearson_residuals/impact_cellot/cache/model.pt
+
+WALL TIME: ~25 min for scGen + ~35 min for IMPACT (run sequentially per flavor; parallel across flavors)
+
+
+================================================================================
+PHASE 3 — BCG MOUSE PREPROCESSING
+================================================================================
+
+WHAT YOU DO
+   /n/home01/jzhou1125/miniforge3/envs/analysis/bin/python -m nbconvert \
+       --to notebook --execute --inplace \
+       --ExecutePreprocessor.timeout=1800 \
+       speciesOT/baseline/analysis/16_bcg_mouse_data_prep.ipynb
+
+INPUT NEEDED
+   /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/tb/data/bcg_mouse_aligned_050626.h5ad
+       1,406 cells x 10,866 genes
+       var_names: mouse gene symbols (Mrpl15, Lypla1, ...)
+       .layers['counts']: raw integer counts
+       .X: scanvi-corrected (we DISCARD this and use the raw counts)
+       cell_type: 'LT-HSC' (412) and 'LT-HSC treated' (994)
+   The 2 atlas datasets from Phase 1 (defines the gene namespace BCG must align to).
+   The cached ortholog table from Phase 1 (scripts/.biomart_ortholog_cache.csv).
+
+OPERATIONS PERFORMED
+   - Swap .X with .layers['counts'] (use raw integer counts, not scanvi output)
+   - BioMart symbol -> ENSMUSG mapping (caches to scripts/.bcg_symbol_to_ensmusg.csv)
+   - ENSMUSG -> ENSG via cached ortholog table from Phase 1
+   - For each flavor:
+       * Get atlas's per-flavor 1000-gene ENSG list
+       * For each gene: copy real counts if present in BCG; else zero-fill
+       * normalize_total + log1p
+       * Round-trip via CellOT env
+
+EXPECTED OUTPUT
+   cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/bcg_mouse_aligned_seurat_v3_v07.h5ad
+       1,406 cells x 1000 genes; coverage 531/1000 (53.1%) — rest zero-filled
+   cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/bcg_mouse_aligned_pearson_residuals_v07.h5ad
+       1,406 cells x 1000 genes; coverage 650/1000 (65.0%) — rest zero-filled
+   speciesOT/baseline/analysis/bcg_mouse_outputs/bcg_atlas_hvg_coverage.csv
+       Per-flavor coverage table
+
+WALL TIME: ~3 minutes
+
+
+================================================================================
+PHASE 4 — BCG PREDICTION (4 model x flavor combos)
+================================================================================
+
+WHAT YOU DO
+   /n/home01/jzhou1125/miniforge3/envs/analysis/bin/python -m nbconvert \
+       --to notebook --execute --inplace \
+       --ExecutePreprocessor.timeout=1800 \
+       speciesOT/baseline/analysis/17_bcg_prediction.ipynb
+
+INPUT NEEDED
+   The 4 trained model.pt files from Phase 2.
+   The 2 BCG-aligned datasets from Phase 3.
+   The 2 atlas-full datasets from Phase 1 (used by scGen to recompute code_means).
+
+OPERATIONS PERFORMED
+   For each (flavor, model):
+   - Load atlas dataset to define input_dim
+   - Load trained model from cache/model.pt
+   - For scGen: compute code_means = mean latent vector per condition (mouse, human) on training data
+                shift = code_means['human'] - code_means['mouse']
+                pred = decode(encode(BCG_mouse) + shift)
+   - For IMPACT_CellOT:
+                Load AE encoder/decoder from atlas_full_<flavor>/scgen/cache/model.pt
+                pred = decode(g.transport(encode(BCG_mouse)))
+                where g is the trained OT map
+   Then: build joint UMAP per flavor (atlas mouse + atlas human + BCG mouse + scGen pred + IMPACT pred)
+
+EXPECTED OUTPUT
+   cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/bcg_predicted_human_via_scgen_seurat_v3.h5ad
+   cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/bcg_predicted_human_via_impact_cellot_seurat_v3.h5ad
+   cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/bcg_predicted_human_via_scgen_pearson_residuals.h5ad
+   cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/bcg_predicted_human_via_impact_cellot_pearson_residuals.h5ad
+       Each: 1,406 cells x 1000 genes (predicted human gene expression)
+   speciesOT/baseline/analysis/bcg_prediction_outputs/figures/umap_overlay_seurat_v3.{pdf,png}
+   speciesOT/baseline/analysis/bcg_prediction_outputs/figures/umap_overlay_pearson_residuals.{pdf,png}
+       UMAP overlays color-coded by source
+
+WALL TIME: ~3 minutes
+
+
+================================================================================
+PHASE 5 — PAPER-STYLE FIGURES (FROM EXISTING 80-CELL MATRIX, NOT BCG)
+================================================================================
+
+WHAT YOU DO
+   /n/home01/jzhou1125/miniforge3/envs/analysis/bin/python -m nbconvert \
+       --to notebook --execute --inplace \
+       --ExecutePreprocessor.timeout=1800 \
+       speciesOT/baseline/analysis/18_paper_figure_F_G_replica.ipynb
+
+INPUT NEEDED
+   The 80-cell evaluation matrix from earlier work:
+   cellot/cellot_gpu/results/hvg_<flavor>_<group>_<mode>/<model>/evals_ood_<latent_or_data>_space/evals.csv
+   cellot/cellot_gpu/results/hvg_<flavor>_<group>_<mode>/<model>/evals_ood_data_space/imputed.h5ad
+
+OPERATIONS PERFORMED
+   - Aggregate evals.csv into a long-form DataFrame
+   - Square the r2-* columns (upstream evaluate.py mislabels Pearson r as 'r2')
+   - Figure F: bar plots of R^2 and MMD, faceted by HVG flavor, x=group, hue=model
+   - Figure G: per-marker density overlay (12 curated immune markers) for selected matrix entries
+
+EXPECTED OUTPUT
+   speciesOT/baseline/analysis/paper_figure_replica_outputs/figures/
+       figure_F_R2_OOD.{pdf,png}    figure_F_R2_IID.{pdf,png}
+       figure_F_MMD_OOD.{pdf,png}   figure_F_MMD_IID.{pdf,png}
+       figure_G_best_IMPACT_cell.{pdf,png}
+       figure_G_pearson_residuals_c_ood.{pdf,png}
+       figure_G_seurat_c_ood.{pdf,png}
+
+WALL TIME: ~30 seconds
+
+
+================================================================================
+PHASE 6 (OPTIONAL) — PREDICT ON A BRAND-NEW MOUSE FILE
+================================================================================
+
+WHAT YOU DO
+   cd /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT
+   bash scripts/predict_new_input.sh /path/to/your_mouse.h5ad my_tag
+
+INPUT NEEDED
+   Any AnnData h5ad with:
+     - mouse cells
+     - var_names = mouse Ensembl IDs (ENSMUSG*) OR mouse gene symbols
+     - raw integer counts in .layers['counts'] (preferred) or in .X
+
+OPERATIONS PERFORMED
+   - Auto-detect ENSMUSG vs symbols
+   - Map to ENSG via cached BioMart tables (from Phase 1 + 3)
+   - Re-run Phase 3 (BCG-style preprocessing) for both flavors
+   - Re-run Phase 4 (prediction) for all 4 (flavor, model) combos
+
+EXPECTED OUTPUT
+   cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/<my_tag>_aligned_<flavor>_v07.h5ad
+   cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/<my_tag>_predicted_human_via_<model>_<flavor>.h5ad
+       4 prediction files total
+
+WALL TIME: ~50 seconds
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+"BlockingIOError: Unable to lock file"
+   Two processes writing same .h5ad. Wait and re-run, or kill the other process.
+
+"cannot safely cast non-equivalent float32 to int64"
+   raw counts must be int32 for seurat_v3 / pearson_residuals. Check Phase 1 cell 5
+   that .layers['counts'] is int32, not float32.
+
+"BioMart 403 / connection timeout"
+   BioMart goes down occasionally. Cached results live at:
+       scripts/.biomart_ortholog_cache.csv
+       scripts/.bcg_symbol_to_ensmusg.csv
+   If both exist, the pipeline runs without hitting BioMart.
+
+"input_dim missing" when loading IMPACT_CellOT model
+   Pass input_dim=50 (latent dim, not gene dim). See Phase 4 code in notebook 17.
+
+"r2 values look too low"
+   The r2-* columns in evals.csv are Pearson r, NOT R-squared.
+   Square them after loading. Notebooks 13/14/18 do this automatically.
+
+"IMPACT data-space imputed.h5ad is 50-d, expected 1000-d"
+   Re-run evaluate.py with --embedding ae flag. Without it, decode() is silently skipped.
+
+
+================================================================================
+KEY METRICS SEMANTICS (READ ONCE, REMEMBER FOREVER)
+================================================================================
+
+evals.csv 'metric' column meanings:
+   r2-means              ->  Pearson r between predicted and target gene means.  SQUARE for R^2.
+   r2-stds               ->  Pearson r between predicted and target per-gene std.  SQUARE for R^2.
+   r2-pairwise_feat_corrs->  Pearson r between predicted and target gene-gene correlations. SQUARE for R^2.
+   mmd                   ->  Maximum Mean Discrepancy. Lower = better. NOT squared.
+
+evaluation 'where':
+   latent_space          ->  metrics computed on 50-d AE latent codes (fast, OT-focused)
+   data_space            ->  metrics computed on decoded 1000-d gene expression (interpretable, slower)
+
+evaluation 'setting':
+   ood                   ->  evaluate on cells the model never saw during training
+   iid                   ->  evaluate on cells from the same distribution as training (random subset)
+
+
+================================================================================
+END OF CHEAT SHEET
+================================================================================

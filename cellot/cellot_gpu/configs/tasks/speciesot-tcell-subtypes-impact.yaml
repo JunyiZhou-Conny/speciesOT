@@ -1,0 +1,25 @@
+# Group C IMPACT: condition = species (mouse/human).
+# CellOT learns: mouse -> human species transform.
+# Holdout: ALL T cell subtypes (CD4 + CD8 + thymocytes).
+# Model only sees generic "T cell" (CL:0000084) labeled cells from T lineage.
+data:
+  type: cell
+  source: mouse
+  target: human
+  condition: condition
+  path: datasets/speciesot-human-mouse/tcell_subtypes_holdout_v07.h5ad
+
+dataloader:
+  batch_size: 128
+  shuffle: true
+
+datasplit:
+  name: train_test
+  holdout:
+    cell_type_ontology_term_id:
+      - "CL:0000624"
+      - "CL:0000625"
+      - "CL:0000893"
+  groupby: condition
+  test_size: 0.2
+  random_state: 0

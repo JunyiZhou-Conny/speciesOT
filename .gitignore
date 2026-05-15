@@ -1,0 +1,66 @@
+# --- Tier 1 root repo (speciesOT workspace) ---
+# Python / Jupyter
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Runtime / local caches
+*.log
+*.pid
+.pybiomart.sqlite
+*.sqlite
+.submitted_*.csv
+
+# Regenerate from scripts/generate_*.py
+sbatch/
+
+# Bundled checkpoints and raw data under CellOT (large; never push)
+cellot/cellot_gpu/results/
+cellot/cellot_gpu/datasets/
+
+# Accidental Python venv living under package dir name collision (never commit)
+cellot/cellot_gpu/cellot/bin/
+cellot/cellot_gpu/cellot/include/
+cellot/cellot_gpu/cellot/lib/
+cellot/cellot_gpu/cellot/lib64
+cellot/cellot_gpu/cellot/pyvenv.cfg
+
+# Archived inactive CellOT clone (nested git + full tree)
+cellot/_archive/
+
+# Backup of nested .git directories (local convenience only)
+archive/git_backups/
+
+# Anndata payloads
+*.h5ad
+
+# Auto-generated inventories (keep scripts in repo)
+# experiments_inventory.csv
+# experiments_inventory.md
+
+# Nested placeholder (historical)
+archive/autoresearch_nested_placeholder/
+
+# --- Baseline notebook outputs (regenerate locally) ---
+speciesOT/baseline/analysis/presentation_figure_outputs/
+speciesOT/baseline/analysis/atlas_full_outputs/
+speciesOT/baseline/analysis/bcg_mouse_outputs/
+speciesOT/baseline/analysis/bcg_prediction_outputs/
+speciesOT/baseline/analysis/hvg_flavor_nb14_outputs/
+speciesOT/baseline/analysis/hvg_flavor_outputs/
+speciesOT/baseline/analysis/hvg_flavor_results_outputs/
+speciesOT/baseline/analysis/paper_figure_replica_outputs/
+speciesOT/baseline/analysis/figure_g_outputs/
+speciesOT/baseline/analysis/immune_ontology_outputs/*.pdf
+speciesOT/baseline/analysis/immune_ontology_outputs/*.png
+speciesOT/baseline/analysis/interactive_plots/
+speciesOT/baseline/analysis/umap_reference_cd8.npz
+speciesOT/baseline/analysis/interactive_all_celltypes.html
+speciesOT/baseline/analysis/interactive_cellot.html
+speciesOT/baseline/analysis/interactive_impact_or.html
+speciesOT/baseline/analysis/interactive_marker_genes.html
+speciesOT/baseline/analysis/interactive_species_overlay.html

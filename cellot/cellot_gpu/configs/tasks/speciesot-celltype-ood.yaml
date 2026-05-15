@@ -1,0 +1,21 @@
+data:
+  type: cell
+  source: mouse
+  target: human
+  condition: condition
+  path: datasets/speciesot-human-mouse/hvg-top1k.h5ad
+
+dataloader:
+  batch_size: 128
+  shuffle: true
+
+datasplit:
+  holdout: "CL:0000084"
+  key: cell_type_ontology_term_id
+  # Modify this to have a filtering condition, if there is only on candidate then ignore it from the dataset
+  # Keep the groupby the composite key
+  groupby: condition
+  name: toggle_ood
+  mode: ood
+  test_size: 0.2
+  random_state: 0

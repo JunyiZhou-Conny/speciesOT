@@ -1,0 +1,21 @@
+# Group C CellOT: condition = cell_type_status (tcell_subtype/non_tcell_subtype).
+# CellOT learns: non_tcell_subtype -> tcell_subtype transition.
+# Holdout: entire human species.
+data:
+  type: cell
+  source: non_tcell_subtype
+  target: tcell_subtype
+  condition: condition
+  path: datasets/speciesot-human-mouse/tcell_subtypes_holdout_swapped_v07.h5ad
+
+dataloader:
+  batch_size: 128
+  shuffle: true
+
+datasplit:
+  name: train_test
+  holdout:
+    species: human
+  groupby: condition
+  test_size: 0.2
+  random_state: 0

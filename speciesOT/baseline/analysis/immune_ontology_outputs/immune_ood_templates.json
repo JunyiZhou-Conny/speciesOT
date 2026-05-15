@@ -1,0 +1,250 @@
+{
+  "dendritic cell": {
+    "focal": "dendritic cell",
+    "distant": "NK cell",
+    "groups": {
+      "A": {
+        "name": "dendritic_cell",
+        "holdout": [
+          "dendritic cell"
+        ],
+        "holdout_ids": [
+          "CL:0000451"
+        ],
+        "description": "dendritic cell held out alone"
+      },
+      "B": {
+        "name": "dendritic_cell_+nearsib",
+        "holdout": [
+          "dendritic cell",
+          "macrophage"
+        ],
+        "holdout_ids": [
+          "CL:0000451",
+          "CL:0000235"
+        ],
+        "description": "dendritic cell + nearest sibling held out"
+      },
+      "C": {
+        "name": "dendritic_cell_lineage",
+        "holdout": [
+          "dendritic cell",
+          "macrophage"
+        ],
+        "holdout_ids": [
+          "CL:0000451",
+          "CL:0000235"
+        ],
+        "description": "dendritic cell + all siblings (lineage subtree)"
+      },
+      "D": {
+        "name": "distant_NK_cell",
+        "holdout": [
+          "NK cell"
+        ],
+        "holdout_ids": [
+          "CL:0000623"
+        ],
+        "description": "NK cell held out alone (cross-lineage control)"
+      }
+    }
+  },
+  "NK cell": {
+    "focal": "NK cell",
+    "distant": "macrophage",
+    "groups": {
+      "A": {
+        "name": "NK_cell",
+        "holdout": [
+          "NK cell"
+        ],
+        "holdout_ids": [
+          "CL:0000623"
+        ],
+        "description": "NK cell held out alone"
+      },
+      "B": {
+        "name": "NK_cell_+nearsib",
+        "holdout": [
+          "NK cell",
+          "T cell"
+        ],
+        "holdout_ids": [
+          "CL:0000623",
+          "CL:0000084"
+        ],
+        "description": "NK cell + nearest sibling held out"
+      },
+      "C": {
+        "name": "NK_cell_lineage",
+        "holdout": [
+          "NK cell",
+          "T cell",
+          "B cell"
+        ],
+        "holdout_ids": [
+          "CL:0000623",
+          "CL:0000084",
+          "CL:0000236"
+        ],
+        "description": "NK cell + all siblings (lineage subtree)"
+      },
+      "D": {
+        "name": "distant_macrophage",
+        "holdout": [
+          "macrophage"
+        ],
+        "holdout_ids": [
+          "CL:0000235"
+        ],
+        "description": "macrophage held out alone (cross-lineage control)"
+      }
+    }
+  },
+  "macrophage": {
+    "focal": "macrophage",
+    "distant": "T cell",
+    "groups": {
+      "A": {
+        "name": "macrophage",
+        "holdout": [
+          "macrophage"
+        ],
+        "holdout_ids": [
+          "CL:0000235"
+        ],
+        "description": "macrophage held out alone"
+      },
+      "B": {
+        "name": "macrophage_+nearsib",
+        "holdout": [
+          "macrophage",
+          "dendritic cell"
+        ],
+        "holdout_ids": [
+          "CL:0000235",
+          "CL:0000451"
+        ],
+        "description": "macrophage + nearest sibling held out"
+      },
+      "C": {
+        "name": "macrophage_lineage",
+        "holdout": [
+          "macrophage",
+          "dendritic cell"
+        ],
+        "holdout_ids": [
+          "CL:0000235",
+          "CL:0000451"
+        ],
+        "description": "macrophage + all siblings (lineage subtree)"
+      },
+      "D": {
+        "name": "distant_T_cell",
+        "holdout": [
+          "T cell"
+        ],
+        "holdout_ids": [
+          "CL:0000084"
+        ],
+        "description": "T cell held out alone (cross-lineage control)"
+      }
+    }
+  },
+  "plasma cell": {
+    "focal": "plasma cell",
+    "distant": "neutrophil",
+    "groups": {
+      "A": {
+        "name": "plasma_cell",
+        "holdout": [
+          "plasma cell"
+        ],
+        "holdout_ids": [
+          "CL:0000786"
+        ],
+        "description": "plasma cell held out alone"
+      },
+      "B": {
+        "name": "plasma_cell_+nearsib",
+        "holdout": [
+          "plasma cell"
+        ],
+        "holdout_ids": [
+          "CL:0000786"
+        ],
+        "description": "plasma cell + nearest sibling held out"
+      },
+      "C": {
+        "name": "plasma_cell_lineage",
+        "holdout": [
+          "plasma cell"
+        ],
+        "holdout_ids": [
+          "CL:0000786"
+        ],
+        "description": "plasma cell + all siblings (lineage subtree)"
+      },
+      "D": {
+        "name": "distant_neutrophil",
+        "holdout": [
+          "neutrophil"
+        ],
+        "holdout_ids": [
+          "CL:0000775"
+        ],
+        "description": "neutrophil held out alone (cross-lineage control)"
+      }
+    }
+  },
+  "neutrophil": {
+    "focal": "neutrophil",
+    "distant": "B cell",
+    "groups": {
+      "A": {
+        "name": "neutrophil",
+        "holdout": [
+          "neutrophil"
+        ],
+        "holdout_ids": [
+          "CL:0000775"
+        ],
+        "description": "neutrophil held out alone"
+      },
+      "B": {
+        "name": "neutrophil_+nearsib",
+        "holdout": [
+          "neutrophil",
+          "basophil"
+        ],
+        "holdout_ids": [
+          "CL:0000775",
+          "CL:0000767"
+        ],
+        "description": "neutrophil + nearest sibling held out"
+      },
+      "C": {
+        "name": "neutrophil_lineage",
+        "holdout": [
+          "neutrophil",
+          "basophil"
+        ],
+        "holdout_ids": [
+          "CL:0000775",
+          "CL:0000767"
+        ],
+        "description": "neutrophil + all siblings (lineage subtree)"
+      },
+      "D": {
+        "name": "distant_B_cell",
+        "holdout": [
+          "B cell"
+        ],
+        "holdout_ids": [
+          "CL:0000236"
+        ],
+        "description": "B cell held out alone (cross-lineage control)"
+      }
+    }
+  }
+}

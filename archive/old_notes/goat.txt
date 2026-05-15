@@ -1,0 +1,181 @@
+Great questions, all of them important to nail down. Let me work through each.
+
+## "Are we only encoding mouse?" — what scGen does, concretely
+
+scGen has **one** trained model that does two things at different times. Let me walk through what actually happens, step by step, using Group A as a running example.
+
+**During scGen training** (`train_auto_encoder`):
+- The training dataset is a **single matrix of cells**, mouse AND human mixed together, ~12,600 cells × 1000 HVG genes (the exact number I quoted earlier from `01.4`'s output). Each cell has an `.obs['condition']` label that says either `"mouse"` or `"human"`.
+- The model architecture (`AutoEncoder` in `cellot/models/ae.py`) is encoder → 50-d code → decoder. It is **condition-blind**: the species label is NOT an input to the encoder or decoder. The forward pass is just `code = encoder(x)`, `recon = decoder(code)`.
+- The loss is reconstruction MSE: try to make `recon ≈ x` for every cell, mouse or human alike.
+- So the encoder learns a shared 50-d representation that supports reconstructing both mouse cells AND human cells. If the renormalization is correct (and HVG is sensible), cells in the latent space cluster mostly by cell type, with mouse and human versions of the same cell type sitting near each other.
+
+**Right after training**, scanpy's `compute_scgen_shift` runs:
+- Encode every training cell once (no decoder).
+- Group the resulting 50-d codes by `.obs['condition']`.
+- Compute the mean code per condition: `code_means["mouse"]` (one 50-d vector) and `code_means["human"]` (one 50-d vector).
+- The difference `shift = code_means["human"] - code_means["mouse"]` is a single fixed 50-d vector representing "the average direction from mouse-ness to human-ness in latent space."
+
+**At prediction time** (`transport_scgen`):
+- Input: a batch of mouse cells (the holdout CD8 cells in OOD mode, or whatever we're predicting from).
+- `codes = encoder(mouse_cells)` → 50-d codes for the input mouse cells.
+- `shifted = codes + shift` → translated 50-d codes (the model's claim: "this is what these mouse cells look like as human cells in latent space").
+- `predictions = decoder(shifted)` → 1000-d gene expression (the model's claim: "this is what these cells would look like as human cells in gene space").
+
+So **at prediction time, only mouse cells are fed in** — but the model that processes them was trained on both species, and the shift vector was computed from both species' codes. The "translate mouse → human" capability comes from `shift`, not from the encoder/decoder weights themselves. Without the shift, encoder + decoder is just a reconstruction autoencoder.
+
+This is the entire scGen baseline. It's almost embarrassingly simple, and that's why it's a good baseline: any cross-species translation that beats it has to be doing something more than "shift the latent code by the average species offset."
+
+## What scGen can and cannot be fed
+
+What it **needs**:
+- A matrix where mouse and human cells are on the **same numerical scale** (the renorm fix from 04-20 — without it, the latent space is dominated by per-species scale offsets and the shift is meaningless).
+- A `condition` column with at least two values (`mouse`, `human`) so `compute_scgen_shift` has groups.
+- Cells in both species. If you only feed mouse cells, `code_means["human"]` is undefined and there's no shift to apply.
+
+What it **doesn't care about**:
+- Cell type labels. scGen is condition-blind. It does not "know" which cells are CD8 vs CD4 vs B cell. The encoder just learns whatever organization minimizes reconstruction loss.
+- Whether the holdout cells are in the training set. If they're in, the encoder learns to reconstruct them and the shift includes them. If they're out, the encoder has to extrapolate at prediction time.
+
+What is **dangerous** to feed:
+- Mismatched-scale species (the pre-renorm bug).
+- Genes that are only highly expressed in one species (this would inflate the apparent shift). HVG with `batch_key='species'` defends against this.
+- A condition with only one value (e.g., training on mouse-only data and trying to compute a shift); will silently fail or produce a zero shift.
+
+So the bottom line: scGen is a "give me both species in a clean shared feature space and I'll learn a translation direction" model. The biology is in the data prep (renorm, HVG choice, holdout policy). scGen itself is a fairly dumb but well-defined encoder + arithmetic trick.
+
+## Is sharing one trained scGen across roles good or not?
+
+**Pro (this is the right call scientifically):** Both the scGen baseline prediction and the IMPACT_CellOT prediction start from the exact same encoded mouse cells, in the same 50-d latent space, learned from the same training cells. So when you compare R²(scGen) vs R²(IMPACT_CellOT) for the same `(flavor, group, mode)`, the only thing that differs is the prediction step *after* encoding: scGen uses a fixed mean shift; IMPACT uses an OT-trained transport map. Any difference is purely the OT layer's contribution. That's the cleanest possible apples-to-apples comparison.
+
+**Pro (compute):** Same weights, no double training. 40 scGen trainings serve 80 evaluations.
+
+**Con (interpretation):** If scGen baseline does badly, you can't immediately tell whether the encoder is bad or whether the latent-space-shift trick is bad. But you can diagnose this by looking at encoder reconstructions of holdout cells separately (a small follow-up notebook later, not part of the matrix).
+
+**The alternative** would be to train two separate encoders: one for scGen baseline, one specifically for IMPACT. This is what some early CellOT papers do. It's also what makes them harder to interpret — now you can't tell whether IMPACT's win came from a better encoder or from a better transport map. So the field has converged on shared encoders, and the existing CellOT codebase is built around this assumption (`ae_emb.path` literally points at the scGen directory).
+
+Net: shared scGen is good. Don't change it.
+
+## Latent vs data space — yes, you have it right
+
+`--where latent_space` keeps everything in 50-d: predictions are 50-d, target is the encoded 50-d ground truth, R²/MMD are computed in 50-d. The decoder is never called.
+
+`--where data_space` projects predictions back to 1000-d gene space: scGen does encode → shift → decode; IMPACT does encode → OT-transport → decode; target is the actual 1000-d gene expression. R²/MMD are computed in gene space.
+
+Tradeoff:
+- Latent-space metrics are what IMPACT directly optimizes for (the OT loss lives in latent space). They reflect "did the OT step move the cells to the right place in latent space?" Cleaner; less decoder reconstruction noise leaking in.
+- Data-space metrics are what biologists care about (per-gene R², density plots for `PTPRC`, `CD3E`, etc.). But they include decoder reconstruction error, which is the same for scGen and IMPACT (shared decoder), so it cancels out in the *comparison* even though it inflates absolute numbers.
+
+For the matrix: do `--where latent_space` for all 80 evaluations as a default (matches the renorm pipeline). Then for the 1–2 `(flavor, group, mode)` cells you want to highlight in the May 12 talk, also run `--where data_space` to get the per-gene density plots.
+
+## "Never train scGen twice" — elaboration
+
+For each `(flavor, group, mode)` triple, exactly one scGen weight file gets written: `results/hvg_{flavor}_{group}_{mode}/scgen/cache/model.pt`. That single file is then **loaded three times** by different downstream jobs, never retrained:
+
+1. **IMPACT training** in the same directory loads it via `ae_emb.path: ./scgen/`. Only `.encode()` is called; the encoder projects 1000-d cells to 50-d, then the OT solver `g(x)` runs in 50-d. The decoder weights are loaded into memory but never executed. (See `cellot/data/cell.py` lines 149–178.)
+
+2. **IMPACT evaluation** reloads the same scGen weights to encode the OOD test cells into 50-d, runs them through the trained OT map, then either stays in 50-d (`--where latent_space`) or runs them through `.decode()` to get 1000-d predictions (`--where data_space`). Same encoder, possibly the decoder.
+
+3. **scGen baseline evaluation** reloads the same scGen weights, computes `code_means` over the training cells once, then encode → +shift → decode on the OOD test cells. Both encoder and decoder are used.
+
+So the count is: 5 flavors × 4 groups × 2 modes = **40 scGen trainings**. Each one is reused by exactly **one** IMPACT training, **one** IMPACT eval, and **one** scGen eval. Total trained models: 40 scGens (encoder+decoder, used three ways) + 40 IMPACT_CellOTs (the OT map `f, g`) = 80 trained model artifacts, exactly matching the plan's "80 model runs." Total evaluation jobs: 40 IMPACT + 40 scGen = 80. So sbatch count is 40 (scGen train) + 40 (IMPACT train, each `afterok` on its scGen) + 40 (IMPACT eval) + 40 (scGen eval) = 160 scripts.
+
+The key invariant: a given `(flavor, group, mode)` cell has ONE encoder. Both prediction methods compete on equal footing inside that same latent space.
+
+## On Group B / thymocytes — I think we're agreeing, let me re-state
+
+I want to be careful because I think I confused us with my earlier wording. Let me re-state Recommendation 3 cleanly.
+
+**What I'm proposing for Group B = exactly what your initial intent was:** `holdout = [CD8 (CL:0000625), thymocyte (CL:0000893)]`, with the `toggle_ood` machinery handling both modes:
+- **OOD mode**: the model sees ZERO CD8 and ZERO thymocyte cells during training. Half of each (combined, ~half of all CD8 + half of all thymocyte) goes to the `"ignore"` bin (dropped completely); the other half goes to `"ood"` (only used for evaluation).
+- **IID mode**: the model sees half of CD8 + half of thymocyte during training (via the `"train"` bin). The other half of each is in `"ood"` for evaluation, identical to the OOD mode's eval set.
+
+This is exactly what you said: "in OOD setting, CD8 and thymocyte are never seen by any of the models. In IID setting, half CD8 and half thymocyte are seen by the model." We agree.
+
+**What I was warning against (and recommending we NOT do)** was a different design where thymocytes are *permanently filtered* from the training pool regardless of mode (`data.select` filter that runs before `toggle_ood`). That third design would mean: in IID mode, scGen sees half of CD8 + zero thymocyte. That's not what you want and would break the IID/OOD symmetry. So we are NOT doing that. Good.
+
+**On your mentor's "it's ok to leave thymocyte in" comment** — I read this as ambiguous and worth asking him about explicitly tomorrow. Two plausible interpretations:
+
+- *Interpretation A:* "For Group A (pure CD8 holdout), don't worry about contamination from thymocytes-mislabeled-as-CD8-progenitors leaking into training. Treat thymocytes as just another non-CD8 cell type that stays in training. The OOD test on mature CD8 is still meaningful." → This justifies Group A staying as `holdout=[CD8]`.
+
+- *Interpretation B:* "You don't need to filter thymocytes out of the training data ever, even when CD8 is the holdout — they're a different ontology label, the model can learn from them." → Same as Interpretation A, just stronger.
+
+Neither of those would change Group B. Group B's whole point is to test the *stricter* version: hold out the entire T-progenitor + mature-CD8 lineage and see if the model can extrapolate from completely-non-T cells to mature CD8. Groups A and B together let you say "with progenitors visible, OOD R² is X; without progenitors visible, OOD R² is Y; the gap Y−X tells you how much T-lineage exposure helps."
+
+I'd suggest you ask him tomorrow which of A/B he wants emphasized; we just keep both in the matrix for now. The 80-run cost is the same.
+
+## What we can conclude from the four-cell IID/OOD × scGen/IMPACT design
+
+Per `(flavor, group)`, we get a 2×2 table of R² (or MMD, or pick your metric):
+
+|        | scGen          | IMPACT_CellOT     |
+|--------|----------------|-------------------|
+| IID    | R²(scGen, IID) | R²(IMPACT, IID)   |
+| OOD    | R²(scGen, OOD) | R²(IMPACT, OOD)   |
+
+Two derived quantities per row and column:
+
+- **Method gap** (column-wise difference) = R²(IMPACT, mode) − R²(scGen, mode). How much does the OT layer add on top of a fixed encoder, in this mode?
+- **Distribution gap** (row-wise difference) = R²(model, IID) − R²(model, OOD). How much does the model lose when the held-out cells were never seen during training?
+
+The interesting patterns to look for:
+
+- **OT helps everywhere**: both method gaps positive and similar size. IMPACT > scGen regardless of mode. The OT layer is the value-add.
+- **OT specifically rescues OOD**: method gap is small in IID but large in OOD. IMPACT's OT formulation is generalizing better than scGen's mean-shift trick when cells are out of distribution. This is the strongest possible story for IMPACT.
+- **Encoder is the bottleneck**: distribution gaps are large for both models. The latent space itself doesn't extrapolate well to OOD cells; OT can't fix what the encoder didn't capture. → Implies we should look at HVG choice (different `flavor` rows).
+- **Encoder is fine, OT doesn't help**: distribution gaps small, method gaps small. Either the holdout is too easy or the latent space is doing all the work and OT is redundant.
+
+And then **across HVG flavors**, we can ask the meta-question: which flavor gives the smallest scGen distribution gap? That flavor produces an encoder that generalizes best to OOD cells, regardless of what we do downstream. If Pearson residuals wins on this metric (which is the prediction from `01.4`'s biology — Pearson uniquely rescued PTPRC), you have a defensible "Pearson HVG → better OOD encoder → better IMPACT outcomes" story for the May 12 talk.
+
+That's the reason 80 runs is worth it: a single (flavor, group, mode, model) cell tells you almost nothing in isolation; the 2×2×5 grid is what makes the conclusions defensible.
+
+## What is `toggle_ood`, and what changes vs. the current pipeline
+
+`toggle_ood` is the literal name of a Python function in this codebase: `split_cell_data_toggle_ood` in `cellot/cellot_gpu/cellot/data/cell.py` (lines 322–353, you can see it in my last message). It's a code design, not a scientific concept — just one of three datasplit strategies the loader supports. The other two are `train_test` (the standard 80/20 split with optional `holdout` labeling) and `train_test_eval` (three-way split). All three are dispatched from `split_cell_data` on line 356 based on the `datasplit.name` field in the YAML config.
+
+What `toggle_ood` does is: take the dataset, split non-holdout cells normally into train/test (80/20), then take the holdout-labeled cells and split THEM 50/50 into two halves. The `mode` parameter then decides what to do with the first half: `mode: ood` → mark as `"ignore"` (drop entirely from training); `mode: iid` → mark as `"train"` (include in training). The second half is always marked `"ood"` and used only at evaluation. Same random_state across modes guarantees the eval set is byte-identical between IID and OOD runs.
+
+So "toggle_ood" literally means "a datasplit that lets you toggle between IID and OOD by changing one config field, while keeping the eval set fixed."
+
+**What was previously done** (the toggle pipeline + the renorm pipeline before it):
+- Notebook `09_data_prep_toggle_experiments.ipynb` produced TWO data files per `(group, mode)`: `toggle_{gk}_ae_training_{mode}_v07.h5ad` (filtered: in OOD mode it had no holdout cells; in IID mode it had half the holdout cells folded into training) and `toggle_{gk}_holdout_v07.h5ad` (the full dataset, used by IMPACT).
+- scGen's config used `datasplit.name: train_test` and pointed at the `_ae_training_{mode}_v07.h5ad` file. So scGen got mode-filtered data and just did a normal train/test split inside it.
+- IMPACT's config used `datasplit.name: toggle_ood` with `key: cell_type_ontology_term_id` and pointed at the `_holdout_v07.h5ad` file. IMPACT did the IID/OOD split at runtime via `toggle_ood`.
+- This means the *same logical decision* — "should the holdout half be in training in IID mode" — was implemented in TWO places: notebook 09's preprocessing for scGen, and `toggle_ood`'s runtime split for IMPACT. They're supposed to agree, but if you ever edit one and forget the other, scGen and IMPACT silently see different training sets and the comparison is invalid.
+
+**What the new matrix does** (Recommendation 1):
+- Notebook `01.5_data_prep_all_holdouts_hvg_flavors.ipynb` produces ONE data file per `(flavor, group)`: `hvg_{flavor}_{group}_v07.h5ad`, containing the full dataset (mouse + human, all training-eligible cells, in the per-group HVG-1000 feature space). No mode filtering at all in the file.
+- BOTH scGen and IMPACT configs use `datasplit.name: toggle_ood` with `key: cell_type_ontology_term_id`, pointing at the same `hvg_{flavor}_{group}_v07.h5ad`. The `mode: ood` or `mode: iid` field in each config tells the loader which split to apply at runtime.
+- For a given `(flavor, group, mode)`, the scGen config and the IMPACT config produce the same `split` column on the same data (same key, same holdout, same random_state, same mode) — they see byte-identical training sets by construction.
+- Only 5 × 4 = 20 dataset files, not 40 + 20 = 60. And the "implementation in two places" risk is gone: there is one source of truth (the `toggle_ood` function) and it runs at training time for both models.
+
+The **catch**: scGen now uses `toggle_ood` instead of `train_test`. To make sure scGen actually trains correctly under `toggle_ood`, I need to verify that scGen's training loop in `cellot/train/train.py` (`train_auto_encoder`) handles the `"ignore"` and `"ood"` split labels correctly — i.e., that it only uses `"train"` cells, ignores everything else, and uses `"test"` for its validation curve. From what I've already read of `cell.py`, the loader builds split-keyed datasets via `data.obs[split_on].groupby(split_on)`, so any value in the split column that isn't requested just creates a dataset that nothing uses. That should work, but I'll verify it as the first concrete code step before writing `01.5`.
+
+If for any reason scGen + `toggle_ood` doesn't work cleanly out of the box, the fallback is to use `data.select` to filter to non-`"ignore"` cells in the scGen config — a one-line tweak — but I expect we won't need it.
+
+---
+
+You said yes to all three decisions, so I'll proceed in this order:
+1. Verify scGen + `toggle_ood` works cleanly (5 minutes of code reading + a quick smoke test in the analysis env).
+2. Write `research_log_2026-05-04.txt` documenting the four design decisions and why.
+3. Write `01.5_data_prep_all_holdouts_hvg_flavors.ipynb` (5 flavors × 4 groups → 20 dataset files).
+4. Write `scripts/generate_hvg_flavor_configs.py` (5 × 4 × 2 × 2 configs + 4 × 40 = 160 sbatch scripts).
+5. Update `hvg_flavor_run_matrix.{csv,md}` if needed.
+
+No actual training/sbatch submissions until you greenlight after the mentor meeting tomorrow. Want me to start on step 1?
+
+
+x_mouse          (input, 1000-d gene expression — held-out CD8/CD4/etc. mouse cells)
+    │
+    ▼   encoder  (scGen AE, MLP, no condition flag — completely condition-blind)
+    │
+z_mouse          (50-d latent code)
+    │
+    ├── if scGen baseline: z_pred = z_mouse + (code_means["human"] − code_means["mouse"])
+    │   if IMPACT_CellOT:  z_pred = g(z_mouse)   where g is the OT-trained transport map, also R^50 → R^50
+    │
+z_pred           (50-d latent code, predicted "what this mouse cell is in human space")
+    │
+    ▼   decoder  (scGen AE, MLP)
+    │
+y_pred           (1000-d gene expression, the model's prediction)

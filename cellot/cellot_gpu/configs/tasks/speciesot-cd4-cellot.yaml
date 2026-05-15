@@ -1,0 +1,21 @@
+# Group D CellOT: condition = cell_type_status (cd4/non_cd4).
+# CellOT learns: non_cd4 -> cd4 transition.
+# Holdout: entire human species.
+data:
+  type: cell
+  source: non_cd4
+  target: cd4
+  condition: condition
+  path: datasets/speciesot-human-mouse/cd4_holdout_swapped_v07.h5ad
+
+dataloader:
+  batch_size: 128
+  shuffle: true
+
+datasplit:
+  name: train_test
+  holdout:
+    species: human
+  groupby: condition
+  test_size: 0.2
+  random_state: 0

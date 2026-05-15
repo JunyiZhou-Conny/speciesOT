@@ -1,0 +1,425 @@
+Research Log — April 13, 2026
+==============================
+
+Project: Cross-Species Perturbation Prediction with CellOT
+Goal: Transport gene expression across species (mouse → human) using
+      optimal transport, with held-out cell types as OOD evaluation.
+
+
+1. GIT SYNC — FETCHING MENTOR'S UPDATES FROM MAIN BRANCH
+==========================================================
+
+Background
+----------
+Working on the `cellot` branch of JoshuaPrice/speciesOT (private repo).
+The `cellot` branch has 9 commits ahead of `main`, all related to the
+CellOT baseline experiments (data prep, evaluation, UMAP visualization).
+
+Fetched latest `origin/main` (previously stale since ~Feb 25). The
+mentor (Joshua Price) has added 7 new commits (Mar 17 – Apr 10):
+
+  d64bae2  Mar 17  Started E15, quantifying shared ortholog correlation
+                   structure between species
+  b9b45d2  Mar 17  Made correlation plots for mouse, including zoomed
+  0ca8c98  Mar 18  Added human correlation plots to E15
+  f02467d  Mar 25  Updated E15
+  75d14f6  Apr  7  Moved E14 and E15 from cellot
+  fc8c164  Apr  8  E15 is now gene correlations, E16 is learning weights
+  7d463a3  Apr 10  Added E17; ortholog space standard OT does not couple
+                   species well
+
+Files changed on main (vs cellot branch):
+  NEW:      e15_gene_correlations.ipynb     (+5663 lines)
+  NEW:      e16_learning_weights.ipynb      (+1152 lines)
+  NEW:      e17_pairings_standard_ot.ipynb  (+803 lines)
+  MODIFIED: speciesot_helpers.py            (+666 lines)
+  MODIFIED: e10_ontology_matching.ipynb     (minor)
+  MODIFIED: e12_perturbot_sublabels.ipynb   (minor)
+  MODIFIED: e14_fused_gw.ipynb              (minor)
+
+Action taken
+------------
+Selectively checked out only the 3 new notebooks into the cellot branch:
+  git checkout origin/main -- e15_gene_correlations.ipynb \
+                              e16_learning_weights.ipynb \
+                              e17_pairings_standard_ot.ipynb
+
+DID NOT merge speciesot_helpers.py because both the cellot branch and
+main have independent edits to that file. The cellot branch added ~283
+lines (ortholog BioMart functions, ensembl stripping, FGW transport
+helper), and main added ~664 lines (overlapping in intent — both added
+ortholog/BioMart code — but with different implementations and naming).
+Merging would require careful manual conflict resolution.
+
+Note: The 3 new notebooks import functions from the mentor's version of
+speciesot_helpers.py (e.g. ortholog_pearson_r2_by_celltype_biomart) that
+are not present in the cellot branch's version. These notebooks will not
+run as-is on the cellot branch without either (a) merging the helper
+functions, or (b) copying the needed functions inline.
+
+
+2. MENTOR'S NOTEBOOK ANALYSIS — E15: GENE CORRELATIONS
+========================================================
+
+Started: March 16, 2026 | Last updated: March 17, 2026
+
+Research question
+-----------------
+Are top correlated orthologs shared across mice and humans? More
+generally, are genetic relationships across species partially shared?
+
+Hypothesis: A subset of orthologs within each species correlate
+similarly across species, with at least 100 orthologs showing similar
+correlation structure.
+
+Method
+------
+1. Load all Tabula Sapiens (human) and Tabula Muris (mouse) organisms.
+2. Match cells by (cell_type, tissue) using match_cells_by_celltype_tissue.
+3. Query Ensembl BioMart for human↔mouse one-to-one orthologs
+   (mouse_human_orthologs_biomart, defined inline in the notebook).
+4. For each species, restrict to top 1000–5000 HVGs among ortholog genes.
+5. Compute within-species gene-gene R² matrices (Pearson correlation
+   squared) for all HVG pairs.
+6. Cross-reference: for each highly correlated gene pair in species A,
+   look up the ortholog pair's R² in species B.
+
+Analyses performed
+------------------
+  - Clustered heatmaps of gene-gene correlations (mouse and human
+    separately, then side-by-side paired heatmaps).
+  - Identification of correlated gene modules (e.g., Spink4/Reg4 cluster
+    specific to small intestine goblet cells in mouse).
+  - Quantification: what fraction of highly correlated human gene pairs
+    are also highly correlated in mouse?
+  - Extraction of top mutually correlated ortholog pairs ranked by
+    min(human_R², mouse_R²).
+
+Key observations
+----------------
+  - The notebook defines two large helper functions inline:
+    mouse_human_orthologs_biomart (~150 lines) and
+    within_species_ortholog_pair_r2_tables (~200 lines). These overlap
+    significantly with functions added to speciesot_helpers.py on main.
+  - Conclusion is marked TBD — the analysis appears exploratory.
+
+
+3. MENTOR'S NOTEBOOK ANALYSIS — E16: LEARNING WEIGHTS IN FGW
+==============================================================
+
+Started: April 2, 2026 | Last updated: April 2, 2026
+
+Research question
+-----------------
+Can Fused Gromov-Wasserstein (FGW) with optimized global ortholog
+weights outperform FGW with equal weighting on a predetermined set of
+ortholog pairs?
+
+Hypothesis: Yes, optimized weights will outperform because some
+orthologs are particularly informative while others are
+counterproductive.
+
+Method
+------
+Alternating optimization between:
+  Step 1: Fix weights w → solve entropic FGW for transport plan T.
+  Step 2: Fix T → update w by minimizing a quadratic-regularized
+          objective on the simplex (w >= 0, sum(w) = 1).
+
+The cross-space feature cost is:
+  M_ij(w) = Σ_k w_k · d(orth_mouse[i,k], orth_human[j,k])
+which is linear in w, making the weight update a convex QP projected
+onto the probability simplex.
+
+Key function: alternating_weighted_fgw_opt (defined inline, ~250 lines)
+  - Uses POT's entropic_fused_gromov_wasserstein internally
+  - Supports "sqdiff" and "abs" feature losses
+  - L2 regularization on weights (weight_l2 parameter)
+  - Convergence monitored by relative changes in T and w
+
+Setup
+-----
+  - Uses 2 organisms per species (not all), matched by cell type/tissue.
+  - Computes ortholog_pearson_r2_by_celltype_biomart → only 156 orthologs
+    survive (those with high cross-species correlation from E14's method).
+  - Extracts ortholog expression matrices for mouse and human.
+  - Runs alternating optimization with epsilon=0.01, alpha=0 (pure OT
+    on the weighted feature cost, no GW structure term).
+
+Results
+-------
+  - The optimizer selected 7 genes (sparse weight vector):
+    SFTA2, SLC34A2, CLDN18, GABRD, KCNAB3, FOXP3, SCN3B
+  - Cell type pairing accuracy: 45.7%
+    (vs. what baseline? Not explicitly compared in notebook, but E17
+    shows standard OT gets 18.6–24.6% on the same task)
+  - Conclusion marked TBD; next step noted: compare to entropic FGW
+    with just top K orthologs (K=7, K=100).
+
+
+4. MENTOR'S NOTEBOOK ANALYSIS — E17: STANDARD OT CELL PAIRINGS
+=================================================================
+
+Started: April 9, 2026 | Last updated: April 10, 2026
+
+Research question
+-----------------
+Can standard OT couple mouse and human cells in untransformed ortholog
+space (the shared 1000-HVG PCA space from our data prep pipeline)?
+
+Hypothesis: Standard OT will couple outlier cell populations (e.g.,
+non-immune cells that cluster by cell type before species) but NOT
+immune populations (which cluster by species before cell type).
+
+Setup
+-----
+  - Uses the cd8_holdout_v07.h5ad dataset (12,836 cells × 1000 genes).
+  - Subsamples 500 mouse + 500 human cells (random).
+  - Tests three OT variants in the shared PCA space:
+    (a) Gromov-Wasserstein (Euclidean, epsilon=0.1)
+    (b) Gromov-Wasserstein (geodesic distances, k=10 NN graph)
+    (c) Standard OT via EMD (Earth Mover's Distance, no Gromov)
+
+Results
+-------
+  Method                           Cell-type pairing accuracy
+  GW (Euclidean, ε=0.1)           18.6%
+  GW (geodesic, k=10, ε=0.1)     18.2%
+  EMD (standard OT, no GW)        24.6%
+  Sinkhorn (ε=0.1)                ~16% (noted in comment)
+
+Conclusion: Only ~25% cell type pairing accuracy with standard OT on
+500 cells in ortholog PCA space. Standard OT cannot effectively couple
+cell types across species in this space. The mentor notes that the
+graph-based approach gets non-immune cells (outlier distributions)
+correct but largely fails with immune cells.
+
+Takeaway: This motivates the need for more sophisticated approaches
+(e.g., the weighted FGW from E16, or learned cross-species mappings
+like CellOT/IMPACT-OR).
+
+
+5. OBSERVATION — ORTHOLOG ALIGNMENT PRESERVES ALL CELLS
+=========================================================
+
+In notebook 07 (data prep for holdout experiments):
+
+  Human combined: (58852, 61759)    ← 58,852 cells × 61,759 genes
+  Mouse combined: (47802, 18024)    ← 47,802 cells × 18,024 genes
+
+  After BioMart one-to-one ortholog alignment:
+  Ortholog pairs: 14,451
+  Mouse aligned:  (47802, 14451)    ← same 47,802 cells
+  Human aligned:  (58852, 14451)    ← same 58,852 cells
+
+The ortholog alignment (align_adatas_biomart_one2one) only filters
+GENES, not cells. It finds 14,451 one-to-one ortholog pairs that exist
+in both species' gene sets, then subsets both AnnData objects to those
+genes (columns). The rows (cells) are unchanged.
+
+This is expected behavior: ortholog matching is a gene-level operation
+that puts both species into a shared gene space (14,451 paired ortholog
+dimensions). Cell-level matching (which cells correspond across species)
+is a separate downstream step — it is exactly what the OT methods
+(CellOT, IMPACT-OR, FGW) are trying to solve.
+
+The pipeline then applies additional filtering:
+  - match_cells_by_celltype_tissue: subsets to cells with matching
+    (cell_type, tissue) pairs across species
+  - HVG selection: further reduces to ~1000 highly variable genes
+  - scGen encoding: compresses to 50 latent dimensions
+
+So the 58,852 human cells and 47,802 mouse cells will be reduced
+significantly before OT is applied.
+
+
+6. CONNECTION BETWEEN MENTOR'S WORK AND CELLOT BRANCH
+=======================================================
+
+The mentor's E15–E17 notebooks explore a research direction that is
+upstream of / complementary to the CellOT baseline work on the cellot
+branch:
+
+  Mentor's direction (main branch):
+    E15: Which ortholog genes correlate similarly across species?
+    E16: Can we LEARN which orthologs matter for cross-species alignment?
+    E17: Does naive OT work in ortholog space? (Answer: no, only ~25%)
+
+  Cellot branch direction:
+    Notebooks 06–09: CellOT/IMPACT-OR evaluation pipeline, metric
+    standardization, IID vs OOD toggle experiments, data preparation.
+
+The mentor is investigating the fundamental question of HOW to define
+the cross-species feature space (which genes, what weights), while the
+cellot branch work assumes a fixed feature space and evaluates
+different transport models within it.
+
+Key insight from E16: The alternating FGW optimizer achieves 45.7%
+cell-type pairing accuracy with only 7 selected ortholog genes, vs.
+~25% from standard OT on all 1000 HVG ortholog dimensions. This
+suggests that gene selection/weighting is a powerful lever — possibly
+more impactful than the choice of OT algorithm itself.
+
+
+7. UMAP VISUALIZATION ANALYSIS AND PIPELINE
+=============================================
+
+Root cause of 06.2 UMAP mislabeling
+-------------------------------------
+Notebook 06.2 was run in CellOT env (Python 3.9, umap-learn 0.5.7),
+which produced a degenerate [0,10] embedding. Notebook 06.1 (speciesOT_env,
+Python 3.12, umap-learn 0.5.11) produced the correct [-10,15] embedding.
+The labels in 06.2 said "UMAP" but the coordinates were effectively PCA.
+
+Environment comparison:
+  speciesOT_env: scanpy 1.12, anndata 0.12.10, umap-learn 0.5.11 (no plotly)
+  CellOT env:    scanpy 1.8.1, anndata 0.7.6,  umap-learn 0.5.7  (plotly 6.3)
+
+Decision: created new `analysis` conda env (Python 3.12) matching
+speciesOT_env's visualization stack plus plotly:
+  scanpy=1.12, anndata=0.12.10, umap-learn=0.5.11, plotly=6.7.0
+
+CellOT env remains untouched for training.
+
+Reusable visualization pipeline
+---------------------------------
+Built: speciesOT/visualization/umap_pipeline.py
+
+Two entry points:
+  compute_and_save_umap()  — PCA(50) → neighbors(15) → UMAP(0.3, seed=42)
+                             + marker genes + prediction projection
+                             → saves to .npz
+  generate_interactive_plots()  — loads .npz → produces HTML files
+
+Interactive Plotly HTML outputs:
+  interactive_all_celltypes.html    — toggle cell types via legend click
+  interactive_species_overlay.html  — toggle mouse/human
+  interactive_marker_genes.html     — dropdown for gene expression overlay
+  interactive_{model}.html          — model predictions with hover metadata
+
+When preprocessing changes, re-run the two functions. ~2 min total.
+
+Key observations from 06.1/06.3 visualization
+-----------------------------------------------
+  - Mouse CD8 source cells (blue) are very scattered — some appear near
+    pulmonary alveolar type 2 cell clusters, which are biologically
+    very distinct from T cells (mentor observation)
+  - The species overlay shows mouse and human don't mix well in the
+    shared ortholog space, suggesting the preprocessing (ortholog
+    matching, HVG selection, cell matching) may need improvement
+  - This motivates the mentor's E15-E17 work on ortholog weighting
+
+Connection to E15–E17:
+  The mentor is investigating whether the cross-species feature space
+  (which orthologs, what weights) is the bottleneck. If the feature
+  space improves, all downstream transport models benefit. The
+  visualization pipeline makes it easy to re-evaluate any new
+  preprocessing by regenerating all plots.
+
+
+8. NEXT STEPS
+==============
+
+Continuing from April 8 log:
+  [x] Toggle_ood IID/OOD experiments (T1–T4, M1–M4) — all 80 jobs completed
+  [x] Created analysis conda env for visualization
+  [x] Built reusable UMAP visualization pipeline
+  [x] Rewrote notebook 06.2 to use pipeline module
+  [ ] Run notebook 06.2 in analysis env to generate correct interactive UMAPs
+  [ ] Run notebook 10 for IID/OOD results analysis
+  [ ] Re-run evaluations with --where latent_space (for original A/B/C/D groups)
+  [ ] Update notebook 08 to read from evals_ood_latent_space/ paths
+
+From mentor sync:
+  [ ] Discuss speciesot_helpers.py merge with mentor
+  [ ] Explore integration of learned ortholog weights (E16) into pipeline
+
+
+9. BUG FIX — `top_n_organisms_from_species` WITH n=-1 WAS DROPPING A DONOR
+===========================================================================
+
+Context
+-------
+While working through 01.1_hvg_investigation.ipynb, noticed that calling
+`top_n_organisms_from_species(..., n=-1, species=...)` returned 23 human
+donors and 39 mouse donors, which mentor had intended to mean "all
+donors."
+
+Root cause
+----------
+The helper (speciesot_helpers.py, previously lines 34–44) did:
+
+    top_organisms = all_adata.obs['donor_id'] \
+                    .value_counts().index[:n].tolist()
+
+Python slicing `seq[:-1]` means "everything except the last element,"
+NOT "the whole sequence." Since `value_counts()` returns donors sorted
+by cell count descending, `n=-1` was silently excluding the donor with
+the FEWEST cells on each side.
+
+Ground-truth donor counts from the .h5ad files:
+  sampled_human_shared.h5ad:  24 donors (58,931 cells)
+  sampled_mouse_shared.h5ad:  40 donors (47,807 cells)
+
+The silently excluded donors:
+  Human: TSP13         (79 cells)
+  Mouse: 3-M-8/9       (5 cells)
+
+Any previous result (including numbers in earlier log entries) that was
+generated with `n=-1` was actually run on 23 human / 39 mouse donors,
+not the full 24 / 40. The 5-cell mouse donor `3-M-8/9` is too small to
+matter for most downstream work, but TSP13 (79 cells) is plausibly
+nontrivial.
+
+Fix
+---
+Patched the helper to accept an explicit sentinel for "all donors" and
+to guard against other unexpected values:
+
+    if n is None or n == -1:
+        top_organisms = donor_counts.index.tolist()
+    elif isinstance(n, int) and n >= 0:
+        top_organisms = donor_counts.index[:n].tolist()
+    else:
+        raise ValueError(
+            f"n must be a non-negative int, -1, or None; got {n!r}"
+        )
+
+Jupyter gotcha encountered during the fix
+------------------------------------------
+After editing speciesot_helpers.py, counts in Cell 4 still printed
+23 / 39 even though `inspect.getsource(...)` showed the new function
+body. Cause: re-running Cell 4 only re-reads `len(human_adatas)`; the
+list itself was computed by the OLD function before the edit. Module
+reload updates the function object in sys.modules but does not
+retroactively update already-bound variables. Fix was to re-run the
+cells that CALL the helper (Cells 2 and 3), after which Cell 4 flipped
+to 24 / 40.
+
+Going forward, added the `%load_ext autoreload` / `%autoreload 2`
+pattern to the notebook's header cell so future helper edits are
+picked up automatically. Re-running dependent cells is still required.
+
+
+10. OBSERVATION — `ad.concat(top_n_organisms_from_species(..., -1))`
+=====================================================================
+
+With the patch from §9, calling
+
+    adatas = top_n_organisms_from_species(data_dir, -1, species)
+    combined = ad.concat(adatas, join="outer")
+
+produces an AnnData equivalent (in cell content) to just:
+
+    combined = sc.read_h5ad(data_dir + f"sampled_{species}_shared.h5ad")
+
+So for the `n=-1` case, the split→concat step is redundant. Minor
+caveats: concat reorders cells donor-by-donor (descending cell count),
+returns a fresh copy rather than a view, may uniquify `obs_names`, and
+drops most of `.uns` / `.obsm` / `.layers` by default.
+
+The pattern is NOT redundant when `n` is a bounded top-k (e.g., n=5),
+because concat then yields "pooled cells from the top 5 donors," which
+is a genuinely different object than the full file. Keep the split
+step around for that use case; just be aware it's a no-op (aside from
+the caveats above) when `n=-1`.

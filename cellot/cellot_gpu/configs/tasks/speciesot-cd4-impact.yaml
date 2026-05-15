@@ -1,0 +1,21 @@
+# Group D IMPACT: condition = species (mouse/human).
+# CellOT learns: mouse -> human species transform.
+# Holdout: CD4+ T cells (CL:0000624).
+data:
+  type: cell
+  source: mouse
+  target: human
+  condition: condition
+  path: datasets/speciesot-human-mouse/cd4_holdout_v07.h5ad
+
+dataloader:
+  batch_size: 128
+  shuffle: true
+
+datasplit:
+  name: train_test
+  holdout:
+    cell_type_ontology_term_id: "CL:0000624"
+  groupby: condition
+  test_size: 0.2
+  random_state: 0

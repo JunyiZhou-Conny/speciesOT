@@ -1,0 +1,12 @@
+type,lineage,parent,siblings,cousins,ancestors
+HSPC,progenitor,,,,
+T cell,lymphoid,Common lymphoid progenitor,"B cell, NK cell","monocyte, erythrocyte",Common lymphoid progenitor -> HSPC
+B cell,lymphoid,Common lymphoid progenitor,"T cell, NK cell","monocyte, erythrocyte",Common lymphoid progenitor -> HSPC
+plasma cell,lymphoid,B cell,,"T cell, NK cell",B cell -> Common lymphoid progenitor -> HSPC
+NK cell,lymphoid,Common lymphoid progenitor,"T cell, B cell","monocyte, erythrocyte",Common lymphoid progenitor -> HSPC
+monocyte,myeloid,Common myeloid progenitor,erythrocyte,"T cell, B cell, NK cell",Common myeloid progenitor -> HSPC
+macrophage,myeloid,monocyte,dendritic cell,"neutrophil, basophil, erythrocyte",monocyte -> Common myeloid progenitor -> HSPC
+dendritic cell,myeloid,monocyte,macrophage,"neutrophil, basophil, erythrocyte",monocyte -> Common myeloid progenitor -> HSPC
+neutrophil,myeloid,granulocyte progenitor,basophil,"macrophage, dendritic cell, monocyte, erythrocyte",granulocyte progenitor -> Common myeloid progenitor -> HSPC
+basophil,myeloid,granulocyte progenitor,neutrophil,"macrophage, dendritic cell, monocyte, erythrocyte",granulocyte progenitor -> Common myeloid progenitor -> HSPC
+erythrocyte,myeloid,Common myeloid progenitor,monocyte,"T cell, B cell, NK cell",Common myeloid progenitor -> HSPC

@@ -1,0 +1,21 @@
+# CellOT unswapped: condition = species (mouse/human).
+# CellOT learns: mouse -> human species transform.
+# Holdout: CD8+ T cells (OOD test = can this transform generalize to CD8?)
+data:
+  type: cell
+  source: mouse
+  target: human
+  condition: condition
+  path: datasets/speciesot-human-mouse/cd8_holdout_v07.h5ad
+
+dataloader:
+  batch_size: 128
+  shuffle: true
+
+datasplit:
+  name: train_test
+  holdout:
+    cell_type_ontology_term_id: "CL:0000625"
+  groupby: condition
+  test_size: 0.2
+  random_state: 0

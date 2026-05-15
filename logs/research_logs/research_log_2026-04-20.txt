@@ -1,0 +1,691 @@
+Research Log — April 20, 2026
+==============================
+
+Project: Cross-Species Perturbation Prediction with CellOT
+Focus:   Upstream preprocessing audit of `sampled_*_shared.h5ad` prior
+         to HVG selection and downstream OT / scGen work. Motivated by
+         HVG-investigation notebook (01.1) producing suspicious gene
+         lists (PTPRC absent, top HVGs looking weakly expressed on UMAP).
+
+
+1. SUMMARY OF FINDINGS
+========================
+
+Three interlocking issues were surfaced. In priority order:
+
+  a) `sampled_mouse_shared.h5ad` and `sampled_human_shared.h5ad` arrive
+     on the SAME nominal pipeline (log-normalized) but have been
+     processed differently: human `.X` is `log1p(normalize_total(counts))`,
+     mouse `.X` is the same PLUS an additional per-gene `/std` scaling
+     with a hard clip at 10. Every cross-species analysis run to date
+     has been operating on MISMATCHED scales.
+
+  b) `ad.concat` silently drops `.layers`, `.raw`, `.uns`, `.obsp`, and
+     non-shared `.obsm` entries by default. The upstream `log1p` marker
+     in `.uns` and the preserved raw counts in `.raw` were being
+     discarded the moment mouse and human were concatenated, which is
+     why previous investigations could not confirm what transforms had
+     been applied.
+
+  c) Both `.h5ad` files carry raw integer UMI/read counts in `.raw.X`
+     that survive loading but are not displayed in the default AnnData
+     repr. This means the cleanest fix — re-normalize both species
+     identically from raw counts — is a local operation, no re-download.
+
+The re-normalized pipeline produces cross-species-comparable log1p
+matrices. HVG selection with `batch_key="species"` now picks
+biologically-sensible cell-type-specific markers. PTPRC is still
+excluded, but for understandable reasons rooted in the matched-cell
+composition, not a preprocessing bug (see §6).
+
+
+2. CROSS-SPECIES SCALE MISMATCH
+=================================
+
+Initial symptom
+----------------
+While inspecting `train_combined_full.X` (the concat of human and mouse
+matched-ortholog-aligned matrices):
+
+  min=0.0000  max=10.0000  mean=0.2376   ← exact max of 10.0 is suspicious
+  # unique non-zero values: 10,984,563 / 29,747,145 nnz = 37%
+
+Splitting by species:
+
+  human: min=0.0000  max=8.5077  mean=0.1800   (672K unique / 16.9M nnz = 4%)
+  mouse: min=0.0000  max=10.0000 mean=0.2937   (10.6M unique / 13.1M nnz = 81%)
+
+Two fingerprints diverged between species:
+
+  * max_value: human max 8.51 is a legitimate `log1p` value; mouse max
+    of exactly 10.0000 indicates a hard clip (confirmed by observing
+    multiple distinct (cell, gene) pairs landing at exactly 10.0).
+  * uniqueness ratio: human 4% matches the collision pattern of
+    `log1p(normalize_total(integer_counts))` (many (count, cell_total)
+    combos produce identical log values); mouse 81% is consistent with
+    an additional per-gene `/std` step that breaks those collisions.
+
+Verification by staircase analysis
+------------------------------------
+For human cell 0, the smallest non-zero value in `.X[0, :]` was 0.5677.
+Solving `log(1 + k·1) = 0.5677` gives per-cell scale factor
+k_0 ≈ 0.7643, implying this cell had ~13,084 raw UMI counts before
+normalization to target_sum=10,000.
+
+Predicting the cell's staircase:
+
+  raw count | count · k_0 | log1p(...) | observed in .X?
+  ----------|-------------|------------|-----------------
+       1    |   0.7643    |  0.5677    |      yes
+       2    |   1.5287    |  0.9276    |      yes
+       3    |   2.2930    |  1.1917    |      yes
+       4    |   3.0574    |  1.4004    |      yes
+       5    |   3.8217    |  1.5730    |      yes
+       6    |   4.5860    |  1.7202    |      yes
+
+Every one of these predicted values appeared in cell 0's non-zero
+entries with multiple co-occurrences — exactly the expected pattern
+for `normalize_total(1e4) → log1p` applied to integer counts.
+
+The same analysis on mouse data does NOT reproduce a clean staircase
+because the per-gene std divisor (distinct per gene) scrambles the
+values. This is also consistent with sc.pp.scale(..., zero_center=False,
+max_value=10) applied on top of log-normalized mouse data upstream.
+
+Upstream origin
+----------------
+  * Tabula Sapiens (human) pipeline: 2022-era CELLxGENE standard.
+    `.X` = log-normalized; `.layers['decontXcounts']` = raw counts;
+    `.layers['scale_data']` = scaled version kept as auxiliary.
+  * Tabula Muris (mouse) pipeline: older (Seurat-v1-era) workflow.
+    `.X` = scaled-and-clipped (what CELLxGENE exports for the published
+    Tabula Muris release). No `.layers` retained.
+
+Both files carry `.raw.X` with preserved raw integer counts (see §4).
+
+
+3. `ad.concat` SILENTLY DROPS STRUCTURE
+==========================================
+
+Confirmed default behavior when concatenating AnnData objects:
+
+  Attribute        Default concat behavior
+  --------         -----------------------
+  .X               ✓ concatenated along obs (inner join on var)
+  .obs             ✓ concatenated
+  .var             ✓ intersected (inner join)
+  .obsm[key]       ✓ kept iff key present in all inputs AND column dims match
+  .layers[key]     ✗ DROPPED (default merge='unique' does not preserve)
+  .obsp            ✗ DROPPED
+  .varm            ✗ DROPPED
+  .raw             ✗ DROPPED (no flag to preserve)
+  .uns             ✗ DROPPED (default uns_merge=None)
+
+Concrete consequences in our pipeline:
+
+  * The `uns['log1p']` scanpy-marker was lost when concatenating, which
+    is why `log1p in uns? False` on `train_combined_full` suggested (to
+    an incautious reader) that log1p had never been applied.
+  * `.layers['decontXcounts']` (the human-side raw counts) was dropped
+    at concat, removing one obvious path to reconstruct the raw data.
+  * `.raw` was dropped silently, removing the other obvious path.
+  * Of the 7 `.obsm` entries on human and 2 on mouse, only `X_pca` and
+    `X_umap` survived (the intersection with matching dims) — and both
+    were structurally nonsensical after concat because mouse's PCA
+    coords were in Tabula-Muris PCA space and human's were in
+    Tabula-Sapiens PCA space; stacking them produced a `(12786, 50)`
+    array where rows 0..n_human-1 and rows n_human..end live in
+    completely different coordinate systems.
+
+Mitigation
+----------
+Passing `merge="same"` and `uns_merge="same"` preserves identical
+entries across inputs (`.layers` survive iff both sides have the same
+keys). `.raw` cannot be preserved through concat at all — must be
+reattached manually after concat if needed.
+
+Always treat post-concat `.obsm` / `.obsp` / `.uns` as stale; delete
+and recompute. Any analysis that relied on post-concat `X_pca` or
+`X_umap` should be considered suspect.
+
+
+4. `.raw` CONTAINS PRESERVED RAW COUNTS (HIDDEN FROM REPR)
+============================================================
+
+`AnnData.raw` is a separate attribute that does NOT appear in the
+default `__repr__`. Every printed AnnData summary in notebook 01.1
+showed `obs, var, uns, obsm, layers, obsp` but concealed the `.raw`
+attribute that was present on disk.
+
+Inspection via h5py confirmed both files have a top-level `raw` group:
+
+  File                           .X shape          .raw.X shape    raw is integer?
+  --------------------------     ------------      ------------    ---------------
+  sampled_mouse_shared.h5ad     (47807, 14451)    (47807, 18024)  yes (1.00 .. 9523593.00)
+  sampled_human_shared.h5ad     (58931, 14451)    (58931, 61759)  yes (1.00 .. 5126079.00)
+  tabula_muris_all.h5ad         (356213, 14451)   (356213, ~18k)  yes (1.00 .. 85.00 observed in first 1000)
+  tabula_sapiens_all.h5ad       (1136218, 14451)  (1136218, ~62k) yes
+
+The `sampled_*_shared.h5ad` files retain the full pre-processing gene
+set (~18k for mouse, ~62k for human) in `.raw.var`, while the main
+`.var` has been subset to the 14,451 one-to-one orthologs.
+
+Key insight: `.raw` survives normal attribute access and AnnData
+subsetting (boolean row masks, column slicing), but is dropped by
+`ad.concat`. So:
+
+  a = sc.read_h5ad('sampled_human_shared.h5ad')
+  print(a.raw is None)       # False — .raw present
+  b = a[a.obs.donor_id == 'TSP1']
+  print(b.raw is None)       # False — survives boolean mask
+  c = ad.concat([a, a])
+  print(c.raw is None)       # True  — dropped by concat
+
+This is why the per-donor splitting approach (`top_n_organisms_from_species`)
+preserves `.raw` on the per-donor AnnDatas, but the subsequent
+`ad.concat(human_adatas)` discards it.
+
+Value magnitudes in `.raw.X` reflect mixed sequencing protocols:
+
+  Protocol          Per-cell total range    Per-(cell,gene) max typical
+  ----------        --------------------    ---------------------------
+  10x Chromium      1k – 50k UMIs           1 – 500 (rarely few thousand)
+  Smart-seq2        100k – 5M reads         hundreds to millions
+
+Both are integer-valued, non-negative. The `normalize_total` per-cell
+rescaling handles both uniformly (divides each cell by its own total),
+so downstream analysis works on a mixed-protocol matrix as long as
+cells are depth-normalized.
+
+
+5. CANONICAL CROSS-SPECIES PREPROCESSING (NEW BASELINE)
+=========================================================
+
+Replaces the upstream `.X`-trust workflow in 01_data_preprocessing.
+This is the intended path forward for all downstream CellOT / scGen
+experiments on this dataset.
+
+  import scanpy as sc
+  import anndata as ad
+  from speciesot_helpers import (
+      align_adatas_biomart_one2one,
+      match_cells_by_celltype_tissue,
+  )
+
+  MOUSE = '.../sampled_mouse_shared.h5ad'
+  HUMAN = '.../sampled_human_shared.h5ad'
+
+  mouse_full = sc.read_h5ad(MOUSE)
+  human_full = sc.read_h5ad(HUMAN)
+
+  # step 1: promote raw counts to .X
+  mouse = mouse_full.raw.to_adata()
+  human = human_full.raw.to_adata()
+  mouse.obs = mouse_full.obs.copy()   # ensure full obs metadata
+  human.obs = human_full.obs.copy()
+
+  # step 2: cell-axis matching (before gene alignment, to reduce size)
+  mouse_matched, human_matched, match_table = match_cells_by_celltype_tissue(
+      mouse, human,
+      cell_type_key='cell_type_ontology_term_id',
+      tissue_key='tissue_ontology_term_id',
+      return_match_table=True,
+  )
+
+  # step 3: gene-axis ortholog alignment
+  mouse_ortho, human_ortho, ortho_table = align_adatas_biomart_one2one(
+      mouse_matched, human_matched
+  )
+
+  # step 4: identical normalization on ortholog subset  (Option Y)
+  for a in [mouse_ortho, human_ortho]:
+      a.X = a.X.astype('float32')
+      sc.pp.normalize_total(a, target_sum=1e4)
+      sc.pp.log1p(a)
+
+Ordering rationale:
+
+  * .raw.to_adata() FIRST so every subsequent step operates on integer
+    raw counts, not the mismatched processed `.X`.
+  * match_cells_by_celltype_tissue BEFORE ortholog alignment because
+    matching is a cell-axis op and ortholog alignment is a gene-axis op;
+    matching first reduces the cell count from 58k/48k → 6.5k each,
+    making the BioMart ortholog column subset cheaper.
+  * normalize_total AFTER ortholog alignment (Option Y). This way each
+    cell's per-cell depth correction uses the same 14,451 genes for
+    both species, guaranteeing post-normalization per-cell totals
+    match across species. Alternative (Option X = normalize first,
+    then align) leaves a per-cell-total asymmetry because human has
+    62k genes and mouse has 18k before alignment.
+
+Verification after re-normalization
+--------------------------------------
+Post-pipeline diagnostic on an 11,982-cell matched+aligned dataset:
+
+  mouse_ortho: min=0.0003  max=8.8695  mean=1.2429  #unique_nnz_sample=265
+  human_ortho: min=0.0013  max=8.8025  mean=1.1957  #unique_nnz_sample=147
+
+Both max values comfortably below 10 (legitimate log1p, no clip); both
+uniqueness ratios in the same low regime (staircase collisions visible
+in both). Scale mismatch resolved.
+
+
+6. HVG SELECTION WITH `batch_key='species'`
+=============================================
+
+Ran HVG selection on `train_combined_full` (= concat of normalized
+mouse_ortho and human_ortho) with:
+
+  sc.pp.highly_variable_genes(
+      train_combined_full, n_top_genes=1000, flavor='seurat',
+      batch_key='species',
+  )
+
+Why `batch_key` matters
+------------------------
+Without batch_key, HVG is computed on stacked mouse+human cells. Any
+gene with a species-baseline offset (e.g. uniformly high in human,
+uniformly low in mouse, driven by ortholog detection efficiency
+rather than biology) produces high variance purely from the species
+shift and is wrongly flagged as HVG. With `batch_key='species'`,
+dispersion is computed WITHIN each species independently, so
+species-baseline offsets don't register as variance.
+
+Scanpy merges per-batch HVG results using:
+
+  1) Primary sort: `highly_variable_nbatches` (count of batches where
+     gene was flagged as HVG) descending. So genes HVG in both species
+     come first.
+  2) Tiebreaker: average `dispersions_norm` across batches descending.
+
+The final 1000 HVGs are the top of this merged ranking. `nbatches=0`
+genes never make the cut.
+
+Aggregation semantics of `.var` columns
+-----------------------------------------
+When `batch_key` is set, `.var` columns after HVG selection are
+AGGREGATED across species, not per-species:
+
+  .var['means']            = average of per-species means
+  .var['dispersions']      = average of per-species dispersions
+  .var['dispersions_norm'] = average of per-species z-scored dispersions
+  .var['highly_variable_nbatches']     = count of species flagging as HVG
+  .var['highly_variable_intersection'] = nbatches == n_batches
+  .var['highly_variable']  = final top-1000 flag
+
+Per-species stats are NOT written to `.var` by default. To recover:
+run `sc.pp.highly_variable_genes` separately on species-subsets and
+attach per-species columns manually.
+
+Cell-type composition of matched dataset
+------------------------------------------
+The matched (cell_type, tissue)-intersected dataset ended up
+IMMUNE-DOMINATED. Observed PTPRC `frac_nonzero` of 58.6% in mouse and
+69.1% in human — consistent with a dataset where the majority of cells
+are leukocytes. (Both atlases annotate immune cell types more
+consistently than non-immune, so matching by cell-type ontology
+preferentially retains immune cells.)
+
+
+7. PTPRC IS EXCLUDED FROM HVGs — WHY
+=======================================
+
+Observation
+-----------
+  PTPRC (ENSG00000081237) in `train_combined_full.var`:
+    highly_variable          : False
+    highly_variable_nbatches : 0          ← NOT flagged in either species
+    highly_variable_intersection: False
+    means                    : 2.1317
+    dispersions              : 2.9853
+    dispersions_norm         : -0.2067    ← below-average for its mean bin
+    overall rank             : 7183 / 14451
+
+  mouse-only: mean=1.037  var=1.218  frac_nonzero=58.6%  max=4.702
+  human-only: mean=1.677  var=1.786  frac_nonzero=69.1%  max=6.252
+
+  1000th-ranked gene has nbatches=1, dispersions_norm=1.4664.
+
+Interpretation
+---------------
+PTPRC is a pan-leukocyte marker — it's expressed in essentially all
+immune cells (B, T, NK, monocyte, macrophage, DC) at similar levels.
+In a leukocyte-dominated dataset (58-69% PTPRC+), it's "uniformly on"
+and doesn't discriminate between cell subtypes.
+
+In the mean-expression bin containing PTPRC (mean ≈ 2), other genes
+(subtype markers like CD8A, CD19, CD14, CD68, GNLY) have SHARPER
+bimodal expression — strongly on in one subtype, near-zero in others.
+Their per-bin dispersions_norm is positive (+2 to +5) and they are
+correctly flagged as HVGs, displacing PTPRC from the top 1000.
+
+The algorithm's decision is correct for the goal (cross-species
+cell-type discrimination in a leukocyte-heavy matched dataset): it
+prefers features that distinguish subtypes OVER features that uniformly
+label the dominant compartment.
+
+If this investigation were re-run on a non-immune-enriched matched
+dataset (e.g. with broader cell-type ontology matching or tissue
+filters that balance immune vs. non-immune), PTPRC would likely become
+bimodal and qualify as HVG. The current exclusion is a DATA
+COMPOSITION outcome, not a methodology bug.
+
+Decision
+---------
+No action on the HVG selection. Document that PTPRC is tracked
+biologically (e.g. as a QC marker in color-coded UMAPs via `.raw` or a
+preserved log-normalized layer), but is not one of the 1000 features
+used for PCA / OT / scGen training. If the mentor has a specific
+biological reason to force-include PTPRC, add it to an explicit marker
+whitelist on top of the HVG selection.
+
+
+8. PROTOCOL COMPOSITION (10X vs SMART-SEQ2)
+=============================================
+
+Assay distribution in the raw files:
+
+  Mouse (47,807 cells):
+    10x 3' v2          30,326  (63.4%)
+    Smart-seq2         17,481  (36.6%)
+
+  Human (58,931 cells):
+    10x 3' v3          51,192  (86.9%)
+    10x 5' v2           4,297  ( 7.3%)
+    Smart-seq2          3,405  ( 5.8%)
+    Smart-seq3             37  ( 0.06%)
+
+Implications
+-------------
+  * 10x cells contribute UMI counts (deduplicated molecule counts);
+    Smart-seq2 cells contribute read counts (amplification-inflated).
+    Per-cell totals differ by ~100x between protocols.
+  * Mouse is ~37% Smart-seq2, human is only ~6%. That's a 6x difference
+    in Smart-seq2 representation between species.
+  * `normalize_total` handles this: dividing each cell by its own total
+    puts every cell on the same scale regardless of protocol.
+  * For cross-species OT / scGen, the protocol asymmetry is a potential
+    confound, but it's second-order compared to the scale mismatch we
+    just fixed.
+
+If downstream results later look protocol-driven rather than
+cell-type-driven, consider filtering to 10x-only cells:
+  * mouse 10x-only: 30,326 cells
+  * human 10x-only: 55,489 cells
+Simpler scale, smaller Smart-seq2-specific signal leakage. Deferred
+decision; current mixed-protocol pipeline is acceptable as baseline.
+
+
+9. METHODOLOGICAL / CONCEPTUAL CLARIFICATIONS
+===============================================
+
+Several concepts were re-grounded during this investigation. Keeping
+condensed notes for reference:
+
+sc.pp.scale behavior
+---------------------
+  `zero_center=True` (scanpy default):
+    z = (x - μ_g) / σ_g per gene, then clip to [-max_value, max_value].
+    Output centered at 0, clipped symmetric. Standard pre-PCA step.
+    Min of output: -max_value (typically -10)
+    Max of output:  max_value (typically +10)
+
+  `zero_center=False`:
+    z = x / σ_g per gene, then clip to [0, max_value].
+    Output non-negative (assuming input ≥ 0), clipped one-sided.
+    Min of output: 0 (if input ≥ 0)
+    Max of output: max_value
+    ← this is what Tabula Muris applied upstream.
+
+Both are called `sc.pp.scale(max_value=10)`, distinguished by the
+zero_center flag. The one-sided clip fingerprint is: min=0, max=exact
+max_value, with multiple genes at the max.
+
+Dispersion and binning
+------------------------
+Raw `dispersions = variance / mean` has a systematic DECREASING trend
+with mean in scRNA-seq count data (Poisson-like noise inflates low-mean
+dispersion; ceiling effects compress high-mean dispersion). Directly
+ranking by raw dispersion would preferentially select low-mean dropout
+noise genes.
+
+Scanpy's `flavor='seurat'`:
+  1. Bin genes into 20 equal-sized bins by mean expression.
+  2. Compute per-bin mean and std of raw dispersions.
+  3. Z-score each gene within its bin: `dispersions_norm`.
+
+Positive `dispersions_norm` ⟺ more variable than peers at the same
+expression level. Unit-free. Comparable across bins. The z-scoring is
+what makes the selection biologically meaningful rather than a
+statistical artifact of count-data physics.
+
+Staircase of log-normalized counts
+------------------------------------
+For cell i with raw count total T_i, scale factor k_i = 1e4 / T_i.
+After `normalize_total(target_sum=1e4) → log1p`:
+  count=1 in cell i → log(1 + k_i)
+  count=2 in cell i → log(1 + 2·k_i)
+  count=3 in cell i → log(1 + 3·k_i)
+  ...
+
+Within one cell, non-zero values form a discrete staircase. Different
+cells have different T_i hence different k_i hence different staircases.
+Collisions between (cell, gene) pairs are the dominant source of low
+uniqueness-per-nnz ratios in clean `log1p(normalize_total(counts))` data.
+
+Reversing the transform: given a log-normalized value v and the cell's
+k_i, recover the integer raw count as round((exp(v) - 1) / k_i).
+
+Subcellular mRNA distribution
+-------------------------------
+~90-95% of a cell's mature mRNA is in the cytoplasm; ~5-10% is in the
+nucleus (freshly transcribed or pending export).
+
+Standard scRNA-seq (10x Chromium, Smart-seq2) lyses the whole cell and
+captures from both compartments. snRNA-seq captures only nuclear RNA
+and gives ~10x fewer molecules per cell. Your data is whole-cell
+scRNA-seq.
+
+AnnData inheritance rules
+---------------------------
+Subsetting rules (obs-subset and/or var-subset):
+  * Obs-subset filters rows of .X, .obs, .obsm, .obsp (both axes for obsp).
+    Feature-space of .obsm entries UNCHANGED (stale if you changed .var).
+  * Var-subset filters columns of .X, .var, .varm, .varp.
+    .obsm and .obsp UNTOUCHED — they're indexed by obs, not var, so
+    scanpy has no way to invalidate them. Treat as semantically stale
+    after any gene-axis change.
+  * .uns is copied wholesale, not invalidated.
+  * .layers is subset along the same axes as .X.
+
+Operational rule: any time the gene set changes, delete `.obsm['X_pca']`,
+`.obsm['X_umap']`, `.obsp['distances']`, `.obsp['connectivities']`,
+`.uns['neighbors']`, `.uns['pca']`, and recompute. Keeping stale
+embeddings causes silent correctness bugs downstream.
+
+
+10. UPDATED NEXT STEPS
+========================
+
+Blockers / open questions
+---------------------------
+  [ ] Verify cell-type × protocol composition in the matched dataset.
+      If "T cell" is 100% Smart-seq2 in mouse but 100% 10x in human,
+      cross-species differences will conflate with protocol differences.
+      Action: run the (cell_type, assay) cross-tab diagnostic.
+
+  [ ] Rerun all previously-reported cross-species results on the
+      re-normalized pipeline. Numbers from 07, 08, 10, and any OT/
+      CellOT training runs that loaded `.X` directly need an audit.
+      Specifically the ortholog alignment + matching step was run
+      on top of scale-mismatched data.
+
+  [ ] Discuss with mentor: is normalize-after-ortholog-align (Option Y,
+      our new default) or normalize-before-ortholog-align (Option X,
+      what Tabula Sapiens / Tabula Muris upstream does) the right
+      scientific choice? For cross-species work, Option Y gives cleaner
+      per-cell scale matching; Option X gives more faithful full-
+      transcriptome depth estimation. Defensible either way but must be
+      documented.
+
+  [ ] speciesot_helpers.py merge from mentor's main branch:
+      - Keep our patched `top_n_organisms_from_species` (with n=-1 / None
+        sentinel from 2026-04-13 §9).
+      - Add mentor's `ortholog_pearson_r2_by_celltype_biomart` and
+        `run_entropic_fgw_transport`, which live only on main.
+      - Do not overwrite any other helper.
+
+  [ ] Rebuild any `train_combined_full` / `adata_hvg` artifacts used by
+      notebooks 02-10 from the new pipeline. Document clearly that the
+      pre-2026-04-20 checkpoints are on the mismatched scale.
+
+Continuing items (carry-over from 2026-04-13 §8)
+-------------------------------------------------
+  [ ] Run notebook 10 for IID/OOD results analysis.
+  [ ] Re-run evaluations with --where latent_space (for original A/B/C/D
+      groups).
+  [ ] Update notebook 08 to read from evals_ood_latent_space/ paths.
+  [ ] Explore integration of learned ortholog weights (E16) into
+      pipeline.
+
+
+11. RENORM TRAINING + EVALUATION COMPLETE
+==========================================
+
+Training (12 runs, ~80 min wall clock)
+---------------------------------------
+All 12 renorm training jobs completed cleanly on the GPU partition via
+`sbatch/train/renorm/submit_all_renorm.sh`:
+
+  - 4 scGen (one per holdout group) — in parallel, no deps.
+  - 4 swapped CellOT (mouse -> human species transport) — each depends
+    via `afterok` on its own group's scGen.
+  - 4 Normal CellOT (non_X -> X cell-type-status transport, paper-style)
+    — each depends via `afterok` on its own group's scGen.
+
+Outputs under cellot/cellot_gpu/results/renorm_<group>/{scgen,swapped_cellot,
+normal_cellot}/. All have `cache/status='done'` and `cache/model.pt`.
+
+h5ad compat issues + fixes (baked into 01.3)
+---------------------------------------------
+The training/eval environment uses `anndata 0.7`, which fails to read
+files written by the newer `anndata` used by the `01.3` notebook kernel.
+Two distinct failure modes were hit:
+
+  (a) Empty HDF5 placeholder groups (`/layers`, `/obsm`, `/obsp`, `/uns`,
+      `/varm`, `/varp`) and top-level `encoding-type`/`encoding-version`
+      attributes trigger AnnDataReadError on load.
+
+  (b) Categorical columns in `.obs` are serialized in the new 0.2.0
+      format (nested group with `categories`+`codes` children). anndata
+      0.7 expects the flat 0.1.0 layout (integer codes as a Dataset,
+      plus a shared `/obs/__categories` group).
+
+Fix (now encoded as cells 18–19 of 01.3):
+  1. Strip empty groups via `h5py` (version-agnostic).
+  2. Shell out to the **CellOT env's own Python** (`~/.conda/envs/
+     CellOT/bin/python`), reconstruct the AnnData from `h5py`, and
+     `write()` via anndata 0.7 — which emits the 0.1.0 obs layout.
+
+After this round-trip, all 12 `_v07.h5ad` files in
+`cellot/cellot_gpu/datasets/speciesot-human-mouse-renorm/` are loadable
+by both `train.py` and `evaluate.py`.
+
+Evaluation (8 runs)
+--------------------
+sbatch scripts: `sbatch/eval/renorm/eval_{swapped,normal}_cellot_<group>
+_renorm.sbatch` + orchestrator `submit_all_eval_renorm.sh`.
+
+Run with `evaluate.py --setting ood --where latent_space`. Outputs:
+`evals_ood_latent_space/{evals.csv, imputed.h5ad}` per (group, model).
+
+Gotcha: Group D (cd4) has only 96 OOD cells, below the default
+`--n_cells 100,250,500,1000,1500`. evaluate.py silently skips any
+ncells > min(|treated|, |imputed|), producing a 1-line (header-only)
+evals.csv. The stale cd4 sbatches used `--n_cells 50,80`; we applied the
+same override to the two renorm cd4 eval scripts and re-ran. All 8 runs
+now have non-empty metrics.
+
+Comparison notebook 08.1 (stale vs renorm)
+-------------------------------------------
+`speciesOT/baseline/analysis/08.1_renorm_vs_stale_comparison.ipynb`
+mirrors the structure of notebook 08 but reads both families into a
+unified `results_df` with a `run_family` column (stale / renorm) and
+pivots `(group_label, run_family) x model` for each metric. 2x2 plot
+grid, per-cell delta table, TSV exports under
+`autospeciesOT/results_renorm_vs_stale{,_delta}.tsv`.
+
+Headline numbers (8 (group, model) cells × 2 families = 16 runs):
+
+            R² means                          MMD
+            IMPACT    CellOT                  IMPACT    CellOT
+  Group A
+    stale   0.6853    0.6239                  0.0797    0.1090
+    renorm  0.7754    0.7298                  0.0605    0.0859
+  Group B
+    stale   0.6736    0.5581                  0.0728    0.1127
+    renorm  0.7466    0.6909                  0.0570    0.0686
+  Group C
+    stale   0.6405    0.5073                  0.0583    0.0525
+    renorm  0.6656    0.4841                  0.0677    0.0739
+  Group D
+    stale   0.5971    0.5720                  0.0817    0.1209
+    renorm  0.8157    0.7694                  0.0442    0.0568
+
+Renorm wins on R² means: 7/8 cells (only loser: Group C CellOT).
+Renorm wins on R² stds:  5/8 cells (mixed; noisy on std correlations).
+Renorm wins on MMD:      6/8 cells (Group C is the exception for both).
+
+Overall best run: renorm / Group D (CD4 only) / IMPACT
+  R² means = 0.8157, R² stds = 0.6187, MMD = 0.0442
+
+Caveats on the comparison
+--------------------------
+  * Stale was evaluated with `--where data_space` (original 14,451-dim
+    gene space); renorm with `--where latent_space` (50-dim scGen
+    embedding). Latent-space metrics tend to be more forgiving
+    numerically because scGen drops most of the noise variance.
+    => The absolute deltas overstate the "real" per-gene improvement;
+       the *ranking* is the more defensible finding.
+
+  * Spearman rank correlation between stale and renorm (over the 8
+    group×model cells, combined R² + MMD rank): **ρ = -0.12**.
+    I.e. the two families rank the experiments essentially
+    independently. Group D (CD4 only) flips from worst-in-stale to
+    best-in-renorm. Group C (T cell subtypes) is the only setting
+    where stale slightly beats renorm.
+
+  * Interpretation: when scaling is scientifically coherent (renorm),
+    CD4/CD8 holdouts become the easy settings and the broad T-cell-
+    subtypes holdout becomes the hard one — which matches biological
+    intuition (fewer confounds removed means harder transfer). The
+    stale pipeline's ranking was partly driven by species-specific
+    scale confounds rather than by the difficulty of the OOD
+    generalization.
+
+Next steps update
+------------------
+From §10's list:
+
+  [x] Rebuild `train_combined_full` / matched HVG pipeline with
+      normalize-before-ortholog-align on both species. Done via 01.3.
+  [x] Re-run CellOT/IMPACT with the new pipeline. Done; 12 runs.
+  [x] Re-run evaluations with --where latent_space. Done for the
+      renorm family (still pending for stale; would enable
+      apples-to-apples numeric comparison).
+  [x] Comparison notebook 08.1 written + executed. Findings above.
+
+Carrying forward:
+  [ ] Optional: re-run stale evaluation with `--where latent_space` so
+      we can compare apples to apples (current comparison is
+      data_space vs latent_space and the absolute deltas should be
+      read with that caveat).
+  [ ] Audit Group C (T cell subtypes): why does renorm underperform
+      stale on this single group? Hypothesis: HVG with
+      `batch_key="species"` picks different markers than the
+      human-only HVG used in stale, and some of those markers are
+      load-bearing specifically for the broad T-cell holdout.
+  [ ] Slide deck update: incorporate the 2x2 plot + the stale-vs-
+      renorm delta table into the 2026-04-21 mentor meeting.
+  [ ] Commit the new sbatch scripts, the amended 01.3, and the 08.1
+      notebook together with this log.

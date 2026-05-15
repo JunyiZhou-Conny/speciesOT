@@ -1,0 +1,488 @@
+Research Log — April 8, 2026
+==============================
+
+Project: Cross-Species Perturbation Prediction with CellOT
+Goal: Transport gene expression across species (mouse → human) using
+      optimal transport, with held-out CD8+ T cells as OOD evaluation.
+
+
+1. CONTEXT — TASKS FROM MARCH 30 MEETING (Section 4.7)
+========================================================
+
+The following items were discussed with mentor on March 30.
+This log covers items 4.7.1 (outlier T cell investigation),
+4.7.2 (scanpy-based faceted UMAP visualization),
+4.7.3 (metric discrepancy investigation), and
+evaluation standardization (latent_space decision).
+
+Full task list carried forward from March 30 meeting (Section 4.7):
+1. Investigate outlier green T cells on the full-context UMAP
+2. Use sc.pl.umap for side-by-side cell-type visualization
+3. Check overall increase in metrics
+4. Revisit MMD calculation choices (sample-size sensitivity)
+5. Ensure analysis notebooks are up to date
+6. Perform in-distribution (IID) comparison
+7. Non-classical monocyte holdout experiment (include scGen)
+* Remove vague cell types that endanger OOD interpretation
+For Presentation: CD8, nonclassical, and IID (R², MMD, UMAP, R² plot)
+
+
+2. ITEM 4.7.1 — OUTLIER GREEN T CELLS ON FULL-CONTEXT UMAP
+=============================================================
+
+Problem
+-------
+In notebook 06.5 (06.5_r2_illustration_full_context_umap.ipynb), the
+full-context UMAPs for IMPACT-OR and CellOT display all ~12,800 cells as
+a gray background with CD8+ populations highlighted:
+  - Green  = actual human CD8+ T cells (195 cells, ground truth)
+  - Blue   = mouse CD8+ source (195 cells)
+  - Orange = predicted human CD8+ (model output)
+
+Some green (actual human CD8+) dots appear as outliers near the edges of
+the UMAP space — far from the main CD8+ cluster and drifting into
+neighborhoods of other cell types. The concern: are these genuine CD8+
+T cells with unusual expression, or mislabeled cells in the atlas?
+
+Current notebook limitation
+---------------------------
+The plotting function (plot_full_context_umap) uses static matplotlib
+scatter plots. There is no way to hover over or click on individual cells
+to inspect their metadata. Identifying which specific cells are outliers
+requires either manual coordinate picking or a different visualization tool.
+
+Proposed approach: Interactive Plotly UMAP
+------------------------------------------
+Replace the static matplotlib UMAP with an interactive Plotly scatter plot:
+
+  1. Use plotly.express.scatter (or plotly.graph_objects) to reproduce the
+     same layered UMAP: gray background, blue source, green actual, orange
+     predicted.
+
+  2. Attach hover metadata for each point:
+     - cell_type_ontology_term_id
+     - cell_type (human-readable name)
+     - condition (human / mouse)
+     - tissue_ontology_term_id / tissue
+     - donor_id
+     - UMAP coordinates
+
+  3. Export as standalone .html file for browser-based inspection.
+     This allows hovering over outlier green cells to immediately see
+     their donor, tissue, and cell type annotation.
+
+  4. If metadata inspection reveals suspicious patterns (e.g., all outliers
+     from one donor, or tissue mismatch), the next step would be to pull
+     raw gene expression for those cells and check canonical CD8 markers
+     (CD8A, CD8B, CD3E). This gene-level verification is lower priority
+     for now but the interactive map makes it easy to identify candidates.
+
+Status: Not yet implemented. Planning to add a new code cell to notebook
+06.5 (or a companion notebook) that generates the interactive Plotly UMAP.
+
+
+3. ITEM 4.7.2 — SCANPY sc.pl.umap FOR FACETED VISUALIZATION
+==============================================================
+
+Problem
+-------
+The current UMAP in notebook 06.5 computes the embedding using scanpy
+(sc.tl.pca → sc.pp.neighbors → sc.tl.umap), but all plotting is done
+with a custom matplotlib function (plot_full_context_umap). This works
+but does not leverage scanpy's built-in UMAP plotting, which supports:
+  - Faceted color channels (multiple obs columns or gene names at once)
+  - Automatic legend and color palette handling
+  - The `groups` parameter for highlighting specific cell types
+
+The suspicion is that scanpy's native sc.pl.umap would provide cleaner,
+more informative visualizations with less code.
+
+Reference example (from scanpy clustering tutorial)
+----------------------------------------------------
+  dc_cluster_genes = sc.get.rank_genes_groups_df(adata, group="7") \
+                       .head(5)["names"]
+  sc.pl.umap(
+      adata,
+      color=[*dc_cluster_genes, "leiden_res_0.50"],
+      legend_loc="on data",
+      frameon=False,
+      ncols=3,
+  )
+
+This produces a grid of UMAP panels: 5 panels showing expression of the
+top 5 marker genes for cluster 7 (NK cells), plus 1 panel with Leiden
+cluster labels. Each panel highlights one aspect of the data.
+
+How this applies to our project
+-------------------------------
+Two complementary uses:
+
+  A. Per-cell-type side-by-side panels
+     Instead of one crowded UMAP with 30 cell types competing for
+     attention, use:
+       sc.pl.umap(ref, color='cell_type', groups=['CD8-positive, ...'])
+     to highlight one cell type per panel. This isolates the spatial
+     distribution of each cell type against a gray background.
+
+  B. Marker gene expression verification (connects to Item 4.7.1)
+     Run differential expression to find CD8+ marker genes:
+       sc.tl.rank_genes_groups(ref, groupby='cell_type')
+       cd8_markers = sc.get.rank_genes_groups_df(
+           ref, group='CD8-positive, alpha-beta T cell'
+       ).head(5)['names']
+       sc.pl.umap(ref, color=[*cd8_markers, 'cell_type'],
+                  ncols=3, frameon=False)
+
+     This shows whether the outlier green T cells express the expected
+     CD8 marker genes. If an outlier cell shows low CD8A/CD8B expression
+     but high expression of, say, monocyte markers, it is likely mislabeled.
+
+     Prerequisite: the .X matrix in the ref AnnData must be log-normalized
+     (not scaled) for rank_genes_groups to produce meaningful results.
+     Need to verify this before running.
+
+Connection between Items 4.7.1 and 4.7.2
+-----------------------------------------
+The two approaches are complementary:
+  - Plotly interactive map (4.7.1): identify WHICH cells are outliers,
+    inspect their metadata (donor, tissue, ontology term)
+  - Scanpy marker genes (4.7.2): verify WHETHER those cells express
+    the correct marker genes for their annotated cell type
+
+Together they form a diagnostic pipeline:
+  Step 1: Interactive hover → spot outlier cells → note their indices
+  Step 2: Marker gene UMAP → check if those spatial positions show
+          appropriate CD8 marker expression
+  Step 3: If mislabeled cells are confirmed, decide whether to remove
+          them or reannotate before re-running evaluation
+
+Status: Not yet implemented. Need to decide whether to add these
+visualizations to notebook 06.5 or create a new diagnostic notebook.
+
+
+4. ITEM 4.7.3 — METRIC DISCREPANCY BETWEEN NOTEBOOK 06 AND NOTEBOOK 08
+=========================================================================
+
+Problem
+-------
+When comparing the CD8-only holdout (Group A) metrics across notebooks,
+there appeared to be an "overall increase" in performance:
+
+  IMPACT-OR r2_means:  0.7178 (notebook 06)  →  0.8278 (notebook 08)
+  CellOT    r2_means:  0.6488 (notebook 06)  →  0.7899 (notebook 08)
+  IMPACT-OR r2_stds:   0.3227 (notebook 06)  →  0.5480 (notebook 08)
+  CellOT    r2_stds:   0.2814 (notebook 06)  →  0.5106 (notebook 08)
+
+This was suspicious: no retraining was done for Group A between the two
+notebooks. The same model checkpoint should produce identical results.
+
+Root cause: THREE metric definition mismatches
+------------------------------------------------
+
+1. Pearson r vs. R² (the big one)
+
+   Notebook 06 computes:  R² = (Pearson r)²    (squared correlation)
+   evaluate.py yields:    Pearson r             (raw correlation)
+   ...but evaluate.py NAMES the metric "r2-means" / "r2-stds"
+
+   Notebook 08 reads evals.csv via parse_evals_csv, which faithfully
+   reports the values from evaluate.py — i.e., raw Pearson r, mislabeled
+   as "r2". This is a naming bug in the evaluation pipeline.
+
+   Verification by squaring notebook 08 values to compare with notebook 06:
+     IMPACT-OR r2_means: 0.8278² = 0.685  vs  0.718 (nb06) — close
+     CellOT    r2_means: 0.7899² = 0.624  vs  0.649 (nb06) — close
+     IMPACT-OR r2_stds:  0.5480² = 0.300  vs  0.323 (nb06) — close
+     CellOT    r2_stds:  0.5106² = 0.261  vs  0.281 (nb06) — close
+
+   The remaining small gaps are explained by factors (2) and (3) below.
+
+2. Cell subsampling (100 vs 195 cells)
+
+   Notebook 06: uses ALL 195 ground truth + 195 predicted cells.
+   evaluate.py: subsamples 100 cells × 10 random reps (no fixed seed),
+     then parse_evals_csv takes mean across reps at max ncells.
+   With only 195 cells per side, evaluate.py's ncells grid
+   (100,250,500,1000,1500) only runs ncells=100 before breaking.
+   So notebook 08 metrics are averaged over 10 random 100-cell draws —
+   slightly different from the full 195-cell computation.
+
+3. MMD gamma grid
+
+   Notebook 06: np.logspace(-3, 3, num=50)   — gammas from 0.001 to 1000
+   evaluate.py: np.logspace(1, -3, num=50)    — gammas from 10 to 0.001
+   Different bandwidth ranges → different MMD values, explaining:
+     IMPACT-OR mmd: 0.0524 (nb06) vs 0.0797 (nb08)
+     CellOT    mmd: 0.0694 (nb06) vs 0.1090 (nb08)
+
+Implications
+------------
+1. The "improvement" from nb06 → nb08 is NOT real. The model did not
+   get better. The numbers differ because of metric definition mismatches.
+
+2. Cross-group comparisons WITHIN notebook 08 are valid (all use the
+   same evals.csv pipeline), so Groups A/B/C/D can be compared to each
+   other in the second table.
+
+3. However, the metric labeled "r2_means" in notebook 08 is actually
+   Pearson r, not R². This affects interpretation: 0.83 as Pearson r
+   is much weaker than 0.83 as R² (the latter would imply r ≈ 0.91).
+
+Action items
+------------
+  [ ] Fix the naming in evaluate.py: either rename the metric to
+      "pearson_r_means" or square the value before yielding
+  [ ] Decide on a canonical metric definition for the project — use R²
+      (squared) consistently, since that's the standard in the field
+  [ ] Re-generate evals.csv for all experiments with the corrected metric
+  [ ] Consider using all available cells instead of subsampling to 100,
+      since our datasets are small enough (195 cells) that subsampling
+      adds noise without computational benefit
+  [ ] Standardize the MMD gamma grid across notebooks and evaluate.py
+
+
+5. EVALUATION STANDARDIZATION — LATENT SPACE
+===============================================
+
+Decision
+--------
+All future evaluations for CellOT/IMPACT-OR will use --where latent_space
+instead of --where data_space --embedding ae. This aligns with the original
+CellOT paper's evaluation pipeline.
+
+Background
+----------
+Both IMPACT-OR and CellOT use the CellOT architecture (model.name: cellot
+in all config.yaml files). They differ only in the condition variable:
+  - IMPACT-OR: condition=species (mouse→human), holdout=CD8 cell type
+  - CellOT:    condition=cell_type_status (non_cd8→cd8), holdout=human species
+
+Both use scGen purely for dimension reduction (1000 genes → 50 latent dims).
+The optimal transport is performed entirely in the 50-dim latent space.
+
+Previously, all eval sbatch scripts used --where data_space --embedding ae,
+which decodes predictions back to 1000-dim gene space before computing
+metrics. This has two problems:
+  1. It introduces decoder reconstruction error into the metrics
+  2. The original evaluate.py's MMD guard (if treated.shape[1] < 1000)
+     skips MMD computation at exactly 1000 features — we had to patch
+     this to <= 1000 in the cellot_gpu fork
+  3. It does not match the original paper's evaluation procedure
+
+With --where latent_space:
+  - Both treated and imputed are 50-dimensional
+  - MMD passes the < 1000 guard naturally (50 < 1000)
+  - No decoder reconstruction error in metrics
+  - Metrics are computed in the space where the model actually operates
+
+Config verification
+-------------------
+All config.yaml files checked — model.name is "cellot" for all experiments.
+The correct experiment is determined by the --outdir path, which loads
+the corresponding config with the right condition/source/target/holdout.
+
+Directory naming convention (noted for consistency):
+  Group A (CD8):         impact_or/ and cellot/
+  Groups B/C/D:          speciesot_cellot/ (=IMPACT) and
+                         speciesot_cellot_swapped/ (=CellOT)
+
+Files changed (11 sbatch scripts, all under sbatch/eval/):
+  eval_cd8_ood_dataspace.sbatch
+  eval_cd8_ood_cellot_swapped.sbatch
+  eval_cd8_nothymo_impact.sbatch
+  eval_cd8_nothymo_cellot.sbatch
+  eval_tcell_subtypes_impact.sbatch
+  eval_tcell_subtypes_cellot.sbatch
+  eval_cd4_impact.sbatch
+  eval_cd4_cellot.sbatch
+  eval_speciesot_cpu_data.sbatch
+  eval_speciesot_data.sbatch
+  eval_cellot_50dim_ood_dataspace.sbatch
+
+NOT changed:
+  eval_cellot_1000dim_ood.sbatch — CellOT trained on 1000-dim raw genes
+    (no scGen), so data_space is the only valid option
+  eval_speciesot_latent.sbatch — already uses latent_space
+  eval_speciesot_cpu_latent.sbatch — already uses latent_space
+  eval_cellot_50dim_ood.sbatch — already uses latent_space
+
+Impact on downstream analysis
+------------------------------
+  - evals.csv will now be written to evals_ood_latent_space/ directories
+    instead of evals_ood_data_space/
+  - Notebook 08 (parse_evals_csv) must be updated to read from the new path
+  - Latent-space metrics are NOT directly comparable to prior data-space
+    metrics — all experiments should be re-evaluated for a clean comparison
+  - Notebook 06's compute_ood_metrics operates in data_space (1000 genes)
+    and is no longer directly comparable to the standardized pipeline
+
+
+6. NOTEBOOK REORGANIZATION
+===========================
+
+Renamed 06.5 → 06.1 to establish a clean numbering scheme:
+  06   = base CD8 holdout evaluation
+  06.x = incremental improvements and diagnostics
+
+New notebooks created:
+  06.1 = R² illustration + full-context UMAP (renamed from 06.5)
+  06.2 = Interactive Plotly UMAP for outlier inspection (new)
+  06.3 = (planned) Marker gene verification with sc.pl.umap
+
+
+6. METRIC STANDARDIZATION — FOLLOW THE ORIGINAL PAPER
+========================================================
+
+Decision
+--------
+All future experiments must use the original CellOT paper's evaluate.py
+pipeline for metric computation. We will NOT invent new metric functions
+in analysis notebooks. Specifically:
+
+  1. R² values: evaluate.py stores Pearson r labeled "r2-means"/"r2-stds".
+     We square these in parse_evals_csv to get actual R².
+     → Changed parse_evals_csv in notebook 08.
+
+  2. MMD gamma grid: np.logspace(1, -3, num=50).
+     This is the original paper's convention. The notebook-defined
+     compute_ood_metrics previously used logspace(-3, 3, 50), which was
+     our own invention. This has been corrected to match the paper.
+     → Changed compute_ood_metrics in notebook 08.
+
+  3. Cell subsampling: evaluate.py subsamples 100 cells × 10 reps.
+     The notebook also computes full-cell metrics (all holdout cells)
+     as a secondary validation. Both are displayed in a comparison table.
+
+  4. Evaluation space: latent_space (50-dim scGen latent).
+     All eval sbatch scripts updated from data_space to latent_space.
+     (See Section 5.)
+
+Rationale
+---------
+The metric discrepancy investigation (Section 4) revealed that the
+"improvement" between notebook 06 and 08 was entirely an artifact of
+different metric definitions. To avoid this confusion:
+  - We standardize on the original paper's definitions
+  - We provide both subsampled and full-cell metrics for transparency
+  - We document the exact computation method in each table
+
+Changes made to notebook 08
+----------------------------
+  [x] parse_evals_csv: now squares r2-means, r2-stds, r2-pairwise_feat_corrs
+  [x] compute_ood_metrics: gamma grid changed to logspace(1, -3, 50)
+  [x] Added Section 8: full-cell evaluation for all 4 groups × 2 models
+  [x] Added Section 9: comprehensive comparison table (subsample vs full-cell)
+
+
+7. NEXT STEPS
+==============
+
+Near-term (this week):
+  [ ] Implement interactive Plotly UMAP for outlier inspection (4.7.1)
+  [ ] Add scanpy sc.pl.umap faceted visualization (4.7.2)
+  [ ] Verify .X normalization in ref AnnData for rank_genes_groups
+  [x] Investigate metric discrepancy between nb06 and nb08 (4.7.3)
+      → RESOLVED: r vs r² naming bug + subsampling + MMD gamma mismatch
+  [x] Standardize metric definitions to match original paper
+  [x] Standardize MMD gamma grid to logspace(1, -3, 50)
+  [x] Standardize evaluation to latent_space (11 sbatch files updated)
+  [x] Update notebook 08 with corrected metrics + comparison table
+  [ ] Re-run all evaluations with --where latent_space
+  [ ] Update notebook 08 to read from evals_ood_latent_space/ paths
+
+Remaining from March 30 meeting (4.7.4–4.7.7):
+  [ ] MMD sample-size sensitivity analysis (4.7.4)
+  [ ] Notebook housekeeping (4.7.5)
+  [x] In-distribution (IID) comparison — designed (4.7.6, see Section 8)
+  [x] Non-classical monocyte holdout — designed (4.7.7, see Section 8)
+
+
+8. TOGGLE_OOD EXPERIMENTS: IID/OOD COMPARISON (4.7.6 + 4.7.7)
+=================================================================
+
+Overview
+--------
+New round of experiments using the original CellOT paper's toggle_ood
+datasplit mechanism (cellot/data/cell.py, split_cell_data_toggle_ood).
+This enables fair IID-vs-OOD comparison by splitting holdout cells 50/50:
+half for optional training (IID), half for evaluation (both modes).
+
+These are SEPARATE from existing Groups A/B/C/D, which use train_test
+datasplit with full holdout (all holdout cells go to evaluation).
+
+The toggle_ood mechanism
+------------------------
+  Holdout cells (e.g., ~200 CD8) → train_test_split(test_size=0.5)
+    trainobs (~100):  OOD mode = "ignore",  IID mode = "train"
+    testobs  (~100):  OOD mode = "ood",     IID mode = "ood"
+
+  Both modes evaluate on the SAME testobs cells.
+  Same random_state ensures identical splits across IID and OOD.
+
+Experiment naming: {cell_family}{group_number}-{mode}
+-----------------------------------------------------
+
+  T cell groups:
+    T1: CD8                    — holdout CL:0000625
+    T2: CD8 + thymocyte        — holdout CL:0000625, CL:0000893
+    T3: All T cell subtypes    — holdout CL:0000624, CL:0000625, CL:0000893
+    T4: CD4                    — holdout CL:0000624
+
+  Monocyte groups:
+    M1: Non-classical monocyte           — holdout CL:0000875
+    M2: Non-classical + generic monocyte — holdout CL:0000875, CL:0000576
+    M3: All monocyte subtypes            — holdout CL:0000875, CL:0000860,
+                                           CL:0002393, CL:0000576
+    M4: Classical monocyte               — holdout CL:0000860
+
+  Each group has -ood and -iid variants (e.g., T1-ood, T1-iid).
+
+Cell counts (per species, approximate after 50/50 split)
+---------------------------------------------------------
+  CD8 (CL:0000625):          195 → ~98 eval, ~97 train-half
+  Thymocyte (CL:0000893):    455 → ~228 eval, ~227 train-half
+  CD4 (CL:0000624):          95  → ~48 eval, ~47 train-half
+  Non-classical (CL:0000875): 426 → ~213 eval, ~213 train-half
+  Intermediate (CL:0002393):  504 → ~252 eval, ~252 train-half
+  Classical (CL:0000860):     91  → ~46 eval, ~45 train-half
+  Generic mono (CL:0000576):  80  → ~40 eval, ~40 train-half
+
+Config structure for CellOT/IMPACT
+-----------------------------------
+  datasplit:
+    name: toggle_ood
+    key: cell_type_ontology_term_id
+    holdout: CL:0000625       # or list of IDs
+    mode: ood                  # or iid
+    groupby: condition
+    random_state: 0
+    test_size: 0.2
+
+  For OOD and IID: evaluate with --setting ood --where latent_space
+  (both modes use "ood" cells as evaluation target)
+
+scGen handling
+--------------
+  scGen uses separate ae_training files (all HVG cells, not just matched):
+    OOD mode: ae_training file EXCLUDES all holdout cells
+    IID mode: ae_training file INCLUDES all cells (no exclusion)
+  This gives scGen a slight advantage in IID (sees all holdout cells,
+  not just half). Acceptable since IID-vs-OOD comparisons are per-model.
+
+Models: scGen, IMPACT, CellOT.
+  Directory naming: scgen/, impact/, cellot/ (clean names, not legacy
+  speciesot_cellot / speciesot_cellot_swapped convention).
+
+Total training runs: 8 groups × 2 modes × 3 models = 48
+Total eval runs: 8 groups × 2 modes × 2 models (IMPACT + CellOT) = 32
+  (scGen evaluation is handled separately)
+
+Data preparation: notebook 09_data_prep_toggle_experiments.ipynb
+Training/eval: sbatch scripts in sbatch/train/ and sbatch/eval/
+Analysis: notebook 10_iid_vs_ood_evaluation.ipynb
+
+Presentation deliverables (from March 30 meeting)
+---------------------------------------------------
+  CD8:             T1-ood vs T1-iid (R², MMD, UMAP, R² scatter)
+  Non-classical:   M1-ood vs M1-iid (R², MMD, UMAP, R² scatter)
+  All three models: scGen, IMPACT, CellOT

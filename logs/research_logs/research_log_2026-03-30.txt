@@ -1,0 +1,233 @@
+Research Log — March 30, 2026
+==============================
+
+Project: Cross-Species Perturbation Prediction with CellOT
+Goal: Transport gene expression across species (mouse → human) using
+      optimal transport, with held-out CD8+ T cells as OOD evaluation.
+
+
+1. SUMMARY OF WORK COMPLETED (March 22–30)
+============================================
+
+Two full iterations of the training + evaluation pipeline have been run.
+Below is a record of what changed between them and what the results show.
+
+
+Iteration 1: Notebook 04 — Held-Out T Cell (CL:0000084)
+---------------------------------------------------------
+File: speciesOT/baseline/analysis/04_heldout_TCell_evaluation.ipynb
+
+Setup:
+- Direction: human → mouse (later recognized as WRONG; should be mouse → human)
+- scGen trained on only ~12K matched cells — far too few, led to overfitting
+  (converged almost instantly, suggesting the model memorized the small dataset)
+- Gene alignment: mygene text matching (less accurate than biomart orthologs)
+- Held-out cell type: broad "T cell" (CL:0000084), which includes thymocytes,
+  CD4+, CD8+, and other T cell subtypes — too coarse a holdout
+- OOD evaluation: CellOT's default 50/50 split (52 imputed, 52 discarded),
+  designed for fair IID/OOD comparison but unnecessarily restrictive for our use
+- Models evaluated: scGen, CellOT (2 models only)
+
+Results:
+- UMAP: predicted cells (orange) do not overlap with actual target T cells at all
+- R²: very low (poor mean gene expression correlation)
+- MMD: ~0.1 (moderate; closer to 0 is better)
+- Overall: poor performance, attributable to multiple compounding issues in
+  the experimental setup
+
+Issues identified:
+1. Wrong transport direction (human → mouse instead of mouse → human)
+2. scGen overfitting due to tiny training set (~12K matched cells)
+3. Gene alignment via text matching misses many ortholog pairs
+4. Holdout too broad (T cell umbrella includes many subtypes)
+5. Only 52 cells evaluated due to unnecessary 50/50 OOD/ignore split
+
+
+Iteration 2: Notebooks 05 + 06 — CD8+ T Cell Holdout (CL:0000625)
+-------------------------------------------------------------------
+Files: speciesOT/baseline/analysis/05_expanded_training_CD8_holdout.ipynb
+       speciesOT/baseline/analysis/06_cd8_holdout_evaluation.ipynb
+
+Changes from Iteration 1 (documented at top of notebook 05):
+- scGen now trained on ALL ~106K cells (human + mouse) excluding CD8+,
+  instead of only ~12K matched cells — should substantially reduce overfitting
+- Held-out cell type: CD8+ T cells (CL:0000625) instead of broad T cell,
+  so model still sees thymocytes, CD4+ T cells, etc. during training
+- Gene alignment: biomart one-to-one ortholog matching (paper 13 procedure)
+  instead of mygene text matching — more accurate cross-species gene mapping
+- All held-out cells evaluated (no 50/50 discard)
+- Transport direction: mouse → human (corrected)
+
+Three models compared:
+1. scGen — vector addition baseline: encode(source) + δ → decode
+   where δ = mean(target_latent) - mean(source_latent)
+2. IMPACT-OR — CellOT with condition=species (mouse vs human), holdout=CD8
+   Task: given mouse CD8 → predict human CD8
+3. CellOT — CellOT with condition=cell_type_status (cd8 vs non_cd8),
+   holdout=human species
+   Task: given human nonCD8 → predict human CD8
+
+All three use frozen scGen encoder trained on ~104K cells (excluding CD8+).
+
+Evaluation data:
+- 195 mouse CD8+ T cells (source for IMPACT-OR/scGen)
+- 195 human CD8+ T cells (ground truth target)
+- 195 predicted cells per model (for IMPACT-OR and scGen)
+- CellOT: many more predicted cells (see UMAP issue below)
+
+Results summary table (from notebook 06):
+
+           Metric  Ideal     scGen    CellOT  IMPACT-OR
+         r2_means    1.0    0.5498    0.6488     0.7178
+          r2_stds    1.0    0.1759    0.2814     0.3227
+         l2_means    0.0    1.0077    0.7626     0.6954
+              mmd    0.0    0.0187    0.0694     0.0524
+   enrichment_k50    0.5    0.5088    0.9698     0.5132
+
+Interpretation:
+- IMPACT-OR achieves the best R² on both means (0.72) and stds (0.32),
+  and the lowest L2 distance on means (0.70). It is the most accurate model
+  for predicting mean gene expression of human CD8+ T cells.
+- scGen has the best (lowest) MMD (0.019) and near-perfect enrichment (0.51),
+  meaning its predicted distribution is well-mixed with ground truth.
+  However, its R² is the worst — it produces the right "shape" of distribution
+  but not the right per-gene values.
+- CellOT has middling R² but the worst MMD (0.069) and a suspicious
+  enrichment of 0.97 (should be near 0.5 for good mixing), suggesting
+  its predictions cluster separately from ground truth.
+
+
+2. UMAP ANALYSIS
+=================
+
+UMAP legend (all three panels):
+- Green = Actual human CD8+ (195 cells, ground truth)
+- Blue  = Mouse CD8+ source (195 cells)
+- Orange = Predicted human CD8+ (model output)
+
+scGen panel:
+- Blue (mouse source) forms a dispersed ring-like pattern
+- Orange (predicted) forms a ring on a similar radius as blue
+- Green (actual human CD8+) clusters in the center
+- The predicted cells track the source distribution's shape but
+  are shifted partway toward the green target — partial success
+
+IMPACT-OR panel:
+- Similar structure: blue ring, green cluster in center
+- Orange (predicted) appears to move closer to the center/green cluster
+  compared to scGen, consistent with IMPACT-OR's better R² scores
+- Still not perfectly overlapping with green
+
+CellOT panel — problematic:
+- Massive cloud of orange dots overwhelms the plot
+- Green and blue dots are barely visible (buried under orange)
+- Root cause: CellOT's experimental setup uses condition=cell_type_status,
+  so the "source" population is all human nonCD8 cells (thousands), not
+  just 195 mouse CD8 cells. The evaluation pipeline generated predictions
+  from this much larger source, producing far more than 195 predicted cells.
+- The UMAP code plots all three models with the same 195 green + 195 blue
+  reference cells, but CellOT's imputed.h5ad contains thousands of predictions.
+  This mismatch makes the CellOT UMAP uninterpretable.
+- The enrichment_k50 = 0.97 confirms the problem: predicted cells form
+  their own cluster, separated from ground truth (0.5 = perfect mixing).
+- To fix: either (a) subsample CellOT predictions to 195, or (b) use a
+  different UMAP layout that accounts for the different source populations,
+  or (c) re-evaluate CellOT in the same source→target framework as IMPACT-OR.
+
+
+3. KEY OBSERVATIONS
+====================
+
+1. IMPACT-OR > scGen > CellOT for per-gene prediction accuracy (R²)
+2. scGen > IMPACT-OR > CellOT for distributional similarity (MMD)
+3. CellOT's experimental setup (cell_type_status condition) is fundamentally
+   different from IMPACT-OR's (species condition), making direct comparison
+   unfair. The two models answer different questions:
+   - IMPACT-OR: "What would this mouse CD8 cell look like if it were human?"
+   - CellOT: "What would this human nonCD8 cell look like if it were CD8?"
+4. scGen's overfitting concern is mitigated by expanding training to 106K cells,
+   but R² of 0.55 is still relatively low
+5. Only 2 iterations of experiments completed so far — substantial room
+   for improvement through systematic exploration
+
+
+4. NEXT STEPS (carried forward from March 25th meeting, with interpretation)
+==============================================================================
+
+4.1  Full cell-type UMAP context
+    Currently UMAPs only show CD8+ cells. Visualize ALL human cell types
+    (and optionally mouse) on the same UMAP embedding, then overlay the
+    predicted human CD8+ cells. This reveals whether predictions land in
+    the correct cell-type neighborhood or drift toward other cell types.
+    Critical for understanding if the model is producing "generic human
+    cells" vs. specifically "human CD8+ T cells."
+
+4.2  Cleaner cell population definitions
+    The current CD8+ holdout may include thymocytes (immature T cells from
+    the thymus), which have distinct expression profiles from mature
+    peripheral CD8+ T cells. Remove thymocyte-classified CD8+ cells from
+    both training and evaluation to ensure we are testing on a clean,
+    well-defined population. Check cell ontology children of CD8+ to
+    identify and exclude these.
+
+4.3  In-distribution (IID) performance baseline
+    Before focusing on OOD, verify the model works well on in-distribution
+    data. Train with some CD8+ cells included, evaluate on held-out CD8+
+    cells from the same train/test split. Visualize cell types on all UMAPs.
+    If IID performance is also poor, the issue is fundamental (model
+    capacity, data quality) rather than OOD generalization.
+
+4.4  Scale up the dataset
+    The matched dataset is only ~12K cells. Explore the cell ontology
+    hierarchy to find which cell types have the most cells available.
+    T cell is the highest-level node for mouse. Strategy: instead of holding
+    out very granular types (CD8+), try holding out at higher granularity
+    levels so training sees more diverse cell types. Also try to pull in
+    more cells per species from the atlas.
+
+4.5  Greedy / brute-force experimental search
+    Try all reasonable combinations of: cell type holdouts (CD8, CD4,
+    monocytes, macrophage subtypes), model configurations, preprocessing
+    choices. Keep what improves metrics, discard what doesn't.
+    (This is directly related to the autoresearch idea — see Section 5.)
+
+4.6  Non-atlas batch effect correction
+    Apply the cross-species transport framework to non-atlas datasets where
+    the "perturbation" is experimental batch effects (instrumental differences,
+    temperature, chemical protocols) rather than species differences. This
+    tests whether the method generalizes beyond cross-species transport to
+    the broader problem of single-cell batch correction.
+
+4.7 Additional Visualization and Application
+1. More information about these outliers green T cells, so that we can confirm that the area that is saying they are T cells make sense.
+2. Use the scanpy  sc.pl.umap to visualize each celltype side by side instead of aggregating on a big single map
+3. Try to check the overall increase in metrics
+4. MMD calculation has choices to make, and perhaps the number of points in a distribution might influence the result (keep this transparent and safe), try to do that using sampling from the population
+5. Making sure the analysis jupyter notebooks are up to date
+6. Perform in distribution comparison
+7. Leave out the non-classical monocyte, and thus performing predcition on this different celltype (important to include scGEN)
+* Vague celltypes should be taken out as they put the idea of out of sample distribution in danger
+For Presentation: CD8, nonclassical, and IID  (R2, MMD, UMAP, R2 plot similar in the grant application)
+
+
+5. AUTORESEARCH-STYLE AUTONOMOUS EXPERIMENTATION (discussion)
+==============================================================
+
+Inspired by Karpathy's autoresearch (github.com/karpathy/autoresearch), which
+lets an AI agent autonomously iterate on LLM training — modifying code, training
+for 5 min, evaluating, keeping improvements, discarding failures, repeating
+indefinitely.
+
+Key design decisions (March 30):
+- Primary search variable: cell type holdout configuration (NOT model hyperparams,
+  because we need baselines comparable to original CellOT paper)
+- scGen MUST be retrained when holdout changes (strict OOD: neither scGen nor
+  CellOT/IMPACT may see held-out cells)
+- Two metrics: R² of mean gene expression + MMD. Both must improve for "keep."
+- Fixed parameters: gene alignment (biomart one2one), HVGs (1000), model
+  architecture (matching original paper), optimizer settings
+- Timing: ~83 min per experiment with scGen retrain, ~46 min with scGen cached
+- Thymocyte strategy: rather than classifying thymocytes into CD4/CD8 (hard),
+  exclude CD4 + CD8 + thymocytes together when doing T cell holdout experiments
+
+Implementation: see autospeciesOT/ directory (program.md, run_experiment.py).

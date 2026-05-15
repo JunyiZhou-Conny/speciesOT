@@ -1,0 +1,513 @@
+Research Log — May 4, 2026
+==========================
+
+Project: Cross-Species Perturbation Prediction with CellOT
+Focus:   Lock down the design of the 5-HVG-flavor x 4-holdout-group x
+         2-mode (OOD/IID) x 2-model (scGen, IMPACT_CellOT) validation
+         matrix so it is meaningful, reproducible, and defensible at
+         the May 12 lab meeting. Resolve the architectural ambiguities
+         around scGen's dual role and the toggle_ood split semantics
+         BEFORE writing 01.5 and the configuration generator.
+
+
+1. GOALS
+=========
+
+May 5 (mentor meeting tomorrow):
+  - Show the 5-flavor matrix design and the run-count accounting.
+  - Show 01.5_data_prep_all_holdouts_hvg_flavors.ipynb (the new
+    preprocessing notebook) at least dry-run on Group A so the file
+    layout exists on disk.
+  - Show scripts/generate_hvg_flavor_configs.py with all 80 configs +
+    160 sbatch scripts staged. NOT submitted.
+  - Resolve Group B semantics with mentor (see §6 below).
+  - Resolve whether to use the matched-pairs subset (12,990 cells)
+    or the full unmatched dataset (~106k cells) as the shared
+    scGen+IMPACT training pool (see §7 below).
+
+May 9 (work-in-progress milestone):
+  - All 80 trainings complete on the GPU partition.
+  - All 80 evaluations complete (40 scGen + 40 IMPACT_CellOT).
+  - Per-(flavor, group) 2x2 R^2/MMD tables ready.
+
+May 12 (lab meeting):
+  - HVG flavor justification figures (already done from 01.4 for 4
+    of 5 flavors; cell_ranger to be added).
+  - 5-flavor results table: per-(group, mode) IMPACT vs scGen and
+    Pearson vs other flavors.
+  - One UMAP overlay (best (flavor, group, mode) cell) computed
+    fresh in the per-flavor latent space.
+  - One density-plot panel for PTPRC (CD45) and CD3E in the
+    Pearson-residuals top-1000 setting.
+
+
+2. WHY THIS PLAN, AT THIS LEVEL OF DETAIL
+============================================
+
+The 5-flavor matrix is the methodological core of the May 12 talk:
+the HVG flavor is the choice that determines which biology the
+encoder has access to. From 01.4 (Group A only) we already know
+Pearson residuals is the only flavor that selects PTPRC into the
+top-1000 (rank 108 vs >7000 in seurat); but a single-group, training-
+only HVG comparison cannot say whether that translates to better
+downstream cross-species prediction. The matrix answers exactly that
+follow-up question, jointly across (flavor, group, mode, model).
+
+The most common design mistake here is to pre-bake mode-specific
+training filters into the data files (the way the 01.3/09 toggle
+pipeline did with `_ae_training_{mode}_v07.h5ad`), which then has to
+agree with what the IMPACT loader does at runtime via toggle_ood. If
+those two paths drift, scGen and IMPACT silently see different
+training cells and the comparison is invalid. Section 5 below records
+the design choice that eliminates this footgun for the new matrix.
+
+
+3. ARCHITECTURAL RECAP: scGen's TWO ROLES
+==========================================
+
+scGen has ONE trained model that fills two distinct downstream roles.
+The same `cache/model.pt` is loaded by three different jobs:
+
+  Role 1 — Baseline prediction model
+  ------------------------------------
+  scGen trained on (mouse + human) cells learns a 1000-d -> 50-d ->
+  1000-d autoencoder, condition-blind during training. After training,
+  `compute_scgen_shift` walks the training set once, encodes every
+  cell, groups codes by .obs['condition'], and computes
+  code_means["mouse"] and code_means["human"]. The shift vector
+  shift = code_means["human"] - code_means["mouse"] is a single
+  fixed 50-d translation.
+
+  Prediction (transport_scgen):
+    codes = encoder(mouse_cells)
+    shifted = codes + shift
+    predictions = decoder(shifted)
+
+  Both .encode() AND .decode() are used. This is the apples-to-apples
+  baseline IMPACT_CellOT must beat.
+
+  Role 2 — Encoder for IMPACT_CellOT
+  -----------------------------------
+  Set in IMPACT's config under data.ae_emb.path: ./scgen/. The
+  loader (cellot/data/cell.py lines 149-178) instantiates the trained
+  scGen, calls only .encode(inputs), and replaces .X with the 50-d
+  codes. The OT solver g(x) operates entirely in 50-d. The decoder
+  weights are loaded into memory but never executed during training.
+  At evaluation time, --where data_space projects predictions back
+  through .decode(); --where latent_space skips that.
+
+The key invariant: 1 scGen training per (flavor, group, mode) cell;
+both downstream paths read the same encoder. By construction, IMPACT
+and scGen-baseline operate on the same cells in the same 50-d
+latent space. Any difference in their R^2 / MMD numbers is purely
+the OT layer's contribution. We never train scGen twice for the
+same flavor x group x mode combination.
+
+
+4. HVG FLAVOR INPUT DISPATCH (RESOLVES ASSUMPTION 1 + 2 OF THE PLAN)
+======================================================================
+
+Verified directly from scanpy source `_highly_variable_genes.py`
+(scanpy 1.12 in the `analysis` conda env at
+/n/home01/jzhou1125/miniforge3/envs/analysis):
+
+  - flavor='seurat':
+    Reads adata.X. Internally calls np.expm1(X) to undo log1p, then
+    computes mean / variance / dispersion in linear space; bins by
+    mean; z-scores dispersions per bin. Expects log-normalized input.
+
+  - flavor='cell_ranger':
+    Reads adata.X. Same function (`_highly_variable_genes_single_batch`)
+    as 'seurat' but does NOT expm1 first; bins by percentile of mean;
+    MAD-normalizes dispersions per bin. Docstring is explicit:
+    "Expects logarithmized data, except when `flavor='seurat_v3'` in
+    which count data is expected." So cell_ranger is paired with
+    seurat in input requirements.
+
+  - flavor='seurat_v3':
+    Reads adata.layers[layer] when layer='counts' is passed (else
+    adata.X). Has `check_nonnegative_integers(X)` that emits
+    UserWarning if non-integers found. Requires raw integer counts.
+    Tie-breaker for batch_key: average rank.
+
+  - flavor='seurat_v3_paper':
+    Same input requirements as seurat_v3 (raw counts via
+    layer='counts'). Only the multi-batch tie-breaker differs:
+    median rank instead of average rank.
+
+  - flavor='pearson_residuals':
+    Called via `scanpy.experimental.pp.highly_variable_genes` (only
+    in scanpy >= 1.9). The Pearson residual is by definition a
+    count-model fit; requires raw counts via layer='counts'.
+
+Consequently 01.5's per-flavor dispatcher is:
+
+  if flavor in ("seurat", "cell_ranger"):
+      sc.pp.highly_variable_genes(
+          a, n_top_genes=N, flavor=flavor, batch_key="species",
+      )                                                # uses .X
+  elif flavor in ("seurat_v3", "seurat_v3_paper"):
+      sc.pp.highly_variable_genes(
+          a, n_top_genes=N, flavor=flavor, batch_key="species",
+          layer="counts",
+      )                                                # uses raw
+  elif flavor == "pearson_residuals":
+      from scanpy.experimental.pp import highly_variable_genes as hvg_pr
+      hvg_pr(
+          a, n_top_genes=N, flavor="pearson_residuals",
+          batch_key="species", layer="counts",
+      )                                                # uses raw
+
+The data file 01.5 produces stores .X = log1p(normalize_total(raw))
+and .layers['counts'] = raw integer counts on the SAME AnnData. After
+HVG selection the .layers['counts'] is dropped from the file written
+to disk (see §7 — the downstream consumers — scGen / IMPACT training,
+evaluate.py — only need .X).
+
+
+5. PER-GROUP HVG SELECTION (RESOLVES ASSUMPTION 3 OF THE PLAN)
+================================================================
+
+For each (flavor, group), HVG is computed exactly ONCE — on the
+matched dataset with the per-group holdout cell type removed
+(training-only feature selection), with batch_key='species'. The
+resulting top-1000 gene set is the FIXED feature space for both IID
+and OOD configs of that group, and for both scGen and IMPACT.
+
+Why per group, not per (group x mode):
+  - IID and OOD must differ only in WHICH cells the model sees at
+    training time, not in WHICH features the model operates on.
+  - If HVG were re-computed per (group, mode), the IID-mode model
+    would secretly benefit from holdout-included HVG selection,
+    contaminating any IID-vs-OOD R^2 comparison.
+
+Why per group, not once globally:
+  - Each group removes a different cell type (or set of cell types)
+    from training. The remaining gene-variance landscape differs:
+    holding out CD8 may remove the strongest CD8A/CD8B markers from
+    the variance-driving subset, allowing other markers to surface.
+  - Globally-computed HVGs would silently include genes whose
+    variance comes from the held-out population, biasing OOD eval.
+
+Total HVG computations: 5 flavors x 4 groups = 20 HVG runs.
+
+
+6. HOLDOUT GROUPS AND THE GROUP B AMBIGUITY
+==============================================
+
+Final group definitions for the 5-flavor matrix:
+
+  Group A — `cd8`            holdout = [CL:0000625]
+                              (mature CD8+ T cell only)
+  Group B — `cd8_thymo`      holdout = [CL:0000625, CL:0000893]
+                              (CD8+ T cell + thymocyte combined)
+  Group C — `tcell_subtypes` holdout = [CL:0000624, CL:0000625,
+                                          CL:0000893]
+                              (CD4+ + CD8+ + thymocyte)
+  Group D — `cd4`            holdout = [CL:0000624]
+                              (mature CD4+ T cell only)
+
+Group B departs from 01.3's encoding. 01.3 had Group B with
+holdout_ids=[CL:0000625] and a separate exclude_from_ae list that
+permanently filtered thymocytes out of the AE training pool
+regardless of mode. That design did NOT compose cleanly with
+toggle_ood semantics (in IID mode, scGen would still see zero
+thymocyte cells, breaking the symmetry where IID and OOD differ
+ONLY in holdout-half visibility).
+
+Under the new combined-holdout encoding (Group B = [CD8, thymocyte]):
+  - OOD mode: model sees zero CD8 and zero thymocyte during training.
+    Half of (CD8 + thymocyte) goes to "ignore" (dropped from train
+    and eval), half to "ood" (eval-only).
+  - IID mode: model sees half of CD8 + half of thymocyte during
+    training. The other half is in "ood" for evaluation. Eval set
+    is byte-identical to OOD-mode eval set (same random_state,
+    same toggle_ood call).
+
+This matches the user's stated initial intent ("in OOD setting,
+CD8 and thymocyte are never seen by any of the models. In IID
+setting, half CD8 and half thymocyte are seen.") and matches
+generate_toggle_configs.py's `t2` group definition.
+
+OPEN WITH MENTOR (May 5 meeting):
+  Mentor said "it's okay to leave thymocyte in" the week prior.
+  Two plausible interpretations:
+  (a) For Group A (pure CD8 holdout), thymocyte cells stay in
+      training (they're a different ontology label, not a CD8
+      contamination concern). This is already what Group A does.
+  (b) Even for Group B, don't filter thymocytes; treat Group B
+      as = Group A. This collapses Groups A and B into one.
+  Need to ask which he meant. Default in this matrix: keep both
+  groups as defined above. Cost is the same (40 sbatch jobs per
+  group either way).
+
+
+7. ONE COMBINED DATA FILE PER (FLAVOR, GROUP); BOTH MODELS USE TOGGLE_OOD
+============================================================================
+
+The toggle pipeline (notebook 09 + generate_toggle_configs.py) used
+TWO data files per (group, mode):
+
+  toggle_{gk}_ae_training_{mode}_v07.h5ad   # filtered, scGen
+                                              datasplit.name=train_test
+  toggle_{gk}_holdout_v07.h5ad              # full matched, IMPACT
+                                              datasplit.name=toggle_ood
+
+The IID/OOD distinction was implemented in TWO PLACES:
+  - notebook 09 baked the mode-specific filter into the AE training
+    file (no holdout cells in OOD mode; half holdout in IID mode).
+  - IMPACT's runtime split_cell_data_toggle_ood handled it for the
+    holdout file at training time.
+
+These two paths are SUPPOSED TO AGREE but if they ever diverge (one
+edited and not the other), scGen and IMPACT silently see different
+training sets. The 5-flavor matrix replaces this with:
+
+  hvg_{flavor}_{gk}_v07.h5ad                # ONE combined file per
+                                              (flavor, group)
+
+  Both scGen AND IMPACT configs:
+    datasplit:
+      name: toggle_ood
+      key: cell_type_ontology_term_id
+      holdout: [...]                        # the per-group holdout
+      mode: ood | iid
+      groupby: condition
+      random_state: 0
+      test_size: 0.2
+
+By construction, scGen and IMPACT in the same (flavor, group, mode)
+cell run identical toggle_ood calls on the same cells with the same
+random_state. They see byte-identical training sets. There is no
+duplication of mode-specific filtering logic; one source of truth
+(`split_cell_data_toggle_ood`) runs at training time for both models.
+
+Verified that scGen + toggle_ood works cleanly:
+  - `train_auto_encoder` (cellot/train/train.py L173-256) only uses
+    iterator.train and iterator.test. The "ignore" and "ood" split
+    labels become DataLoaders that are never consumed by the
+    autoencoder training loop.
+  - `compute_scgen_shift` reads loader.train.dataset.adata.obs[
+    config.data.condition], which is the train split only. The
+    per-condition mean codes are computed correctly with both
+    species present (mouse and human cells are both in the train
+    split because train_test_split groups by condition).
+  - `cast_loader_to_iterator` asserts each loader has at least one
+    batch. In OOD mode the smallest split is "ignore" or "ood" with
+    half the holdout cells (e.g., Group D OOD has ~96 such cells
+    -> 48 each); the assertion holds.
+
+Cell-pool decision (matched vs full):
+  Use the MATCHED dataset (12,990 cells = 6,495 mouse + 6,495 human
+  paired by cell_type x tissue) as the shared training pool for both
+  scGen and IMPACT.
+
+  Why matched, not the full ortholog-aligned ~106k pool:
+    - Guarantees scGen and IMPACT see exactly the same cells. The
+      full pool has ~47k mouse + ~58k human, with imbalanced cell-
+      type distributions per species; OT-style transport in IMPACT
+      would then be partly learning composition shifts that scGen
+      cannot.
+    - 12,990 cells is plenty for a (1000 -> 256 -> 50 -> 256 -> 1000)
+      autoencoder. The renorm pipeline's larger training pool
+      (104,738 cells) is overkill for a model with ~600k parameters
+      and provided no measurable improvement in 01.4-stage smoke
+      tests.
+    - Matched per-celltype balance makes the OOD eval cell counts
+      symmetric across species (e.g., 195 mouse + 195 human held-out
+      CD8 cells for Group A; the eval is unambiguous).
+
+  Trade-off accepted: the new scGen baseline numbers will not be
+  directly comparable in absolute terms to the renorm pipeline's
+  scGen runs (which used the unmatched 100k pool). The MATRIX
+  comparisons inside this run (Pearson vs other flavors;
+  IMPACT vs scGen; IID vs OOD) are still fully internally
+  consistent and that is what the May 12 talk needs.
+
+OPEN WITH MENTOR (May 5 meeting):
+  This is a deliberate departure from the renorm pipeline's data
+  scope. Worth flagging so he knows the 5-flavor numbers are not
+  apples-to-apples with the 04-20 stale-vs-renorm headline numbers
+  (which compared on the unmatched pool). The within-matrix
+  comparisons remain valid.
+
+
+8. EVALUATION SETTING
+=======================
+
+For all 80 evaluations:
+  --setting ood --where latent_space
+
+Rationale:
+  - --setting ood means "predict on the OOD-labeled half of the
+    holdout cells (always the same half, regardless of training
+    mode)." For a model trained in OOD mode this is genuine OOD
+    extrapolation; for one trained in IID mode this is the same
+    held-out half but the model has seen the OTHER half during
+    training. The IID-vs-OOD comparison thus directly measures the
+    benefit of seeing half the held-out population.
+  - --where latent_space evaluates in the 50-d code space, which is
+    where IMPACT's OT loss lives. Less decoder reconstruction noise
+    leaks in than in --where data_space.
+
+scGen baseline eval requires `--embedding ae` flag so evaluate.py
+loads the AE projectors from the local model-scgen symlink and
+short-circuits at the latent-space prediction (encode + shift, no
+decode). Without that flag, evaluate.py defaults to
+`embedding=None` and falls through to a data-space comparison.
+
+For 1-2 cells of interest in the May 12 talk, also re-run with
+--where data_space to enable per-gene density plots (PTPRC, CD3E).
+This is cheap (~5 min CPU each) and adds to evaluation count
+optionally; not part of the 160-sbatch baseline.
+
+
+9. RUN-COUNT ACCOUNTING
+========================
+
+Trained models (per the plan's 80-run target):
+   5 flavors x 4 groups x 2 modes x 2 models = 80 trained models
+                                       ^^^^^^
+                                       scGen + IMPACT_CellOT
+                                       (no Normal CellOT, no
+                                       monocyte groups)
+
+Sbatch scripts:
+  40 train_scgen sbatches
+  40 train_impact_cellot sbatches  (each afterok on its scGen)
+  40 eval_scgen sbatches            (--where latent_space --embedding ae)
+  40 eval_impact_cellot sbatches    (--where latent_space)
+  ----------------------------------------------------------
+ 160 sbatch scripts total           (NONE submitted yet)
+
+Result directories:
+  cellot/cellot_gpu/results/hvg_{flavor}_{gk}_{mode}/
+                            scgen/
+                            impact_cellot/
+                            model-scgen -> scgen   (symlink for
+                                                    IMPACT/scGen
+                                                    eval to find
+                                                    the AE)
+
+IMPACT must appear first in directory names ONLY for the species-
+effect modeling subfolder (impact_cellot/). Per the plan's naming
+convention, the species-effect CellOT variant is "IMPACT_CellOT";
+the directory uses lowercase impact_cellot/ to match the existing
+scripts/* pattern.
+
+Dataset files (one per (flavor, group), shared across modes):
+  cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/
+                              hvg_seurat_a_v07.h5ad
+                              hvg_seurat_b_v07.h5ad
+                              ... 5 x 4 = 20 files
+
+
+10. WHAT THE 2x2 PER (FLAVOR, GROUP) TABLE TELLS US
+=====================================================
+
+Per (flavor, group), the matrix produces one 2x2 table:
+
+                  scGen           IMPACT_CellOT
+  IID  R^2(scGen, IID)         R^2(IMPACT, IID)
+  OOD  R^2(scGen, OOD)         R^2(IMPACT, OOD)
+
+Two derived quantities:
+
+  Method gap (column diff)
+    = R^2(IMPACT, mode) - R^2(scGen, mode)
+    "How much does the OT layer add over a fixed encoder, in this
+    mode?"
+
+  Distribution gap (row diff)
+    = R^2(model, IID) - R^2(model, OOD)
+    "How much does the model lose when the held-out cells were
+    never seen during training?"
+
+Patterns to look for:
+
+  (a) Both method gaps positive and similar size:
+      OT helps everywhere. IMPACT > scGen regardless of mode.
+
+  (b) Method gap small in IID, large in OOD:
+      OT specifically rescues OOD; mean-shift trick fails when the
+      cells are out of distribution. STRONGEST possible IMPACT
+      story.
+
+  (c) Both distribution gaps large for both models:
+      Encoder is the bottleneck. Latent space doesn't extrapolate
+      to OOD cells. Look at HVG flavor differences for diagnosis.
+
+  (d) Distribution gaps small, method gaps small:
+      Holdout was easy. Or both methods are equally good. Inform
+      next iteration.
+
+Across-flavor meta-question (the May 12 headline):
+  Which flavor produces the smallest scGen distribution gap? That
+  flavor's encoder generalizes best to OOD cells. If Pearson wins
+  this metric (consistent with 01.4's PTPRC rescue), the story is:
+  "Pearson HVG -> better OOD encoder -> better IMPACT outcomes."
+
+
+11. PIPELINE EXECUTION ORDER
+==============================
+
+Tonight (May 4 -> May 5 morning):
+
+  [DONE] Step 0: Verify scGen + toggle_ood compatibility from code.
+
+  [DONE] Step 1: Write this log.
+
+  Step 2: Write 01.5_data_prep_all_holdouts_hvg_flavors.ipynb
+          (5 flavors x 4 groups -> 20 hvg_{flavor}_{gk}.h5ad files,
+           round-tripped through CellOT env to .h5ad-v07 as in
+           01.3 cells 18-19).
+
+  Step 3: Write scripts/generate_hvg_flavor_configs.py modeled on
+          generate_toggle_configs.py: emits 80 configs (40 scGen +
+          40 IMPACT) and 160 sbatch scripts (40 train scgen + 40
+          train impact + 40 eval scgen + 40 eval impact). NO
+          submissions.
+
+  Step 4: Update hvg_flavor_run_matrix.{csv,md} to reflect the
+          final design: Group B = [CD8, thymocyte] combined
+          holdout; sbatch count = 160; trained-model count = 80;
+          dataset count = 20; per-flavor file naming.
+
+May 5 (with mentor):
+
+  - Resolve open questions (§6, §7).
+  - Greenlight the 80 trainings.
+  - Submit train_scgen sbatches first (CPU, ~1 hour each); then
+    train_impact sbatches with afterok dependencies (GPU, ~1-2
+    hours each).
+
+May 6-9:
+
+  - Trainings complete; evaluations run; results pulled into
+    a notebook 13 or 08.2 for the (flavor x group x mode x model)
+    pivot table.
+
+May 9-12:
+
+  - Figures: per-flavor 2x2 table; cross-flavor scatter of method
+    gap vs distribution gap; per-flavor density plots for top
+    marker genes. Slide deck assembled.
+
+
+12. CARRY-OVER FROM 04-20
+============================
+
+Items still pending from research_log_2026-04-20.txt §10:
+
+  [open] Verify cell-type x protocol composition in the matched
+         dataset. Action: cross-tab diagnostic. Not blocking the
+         5-flavor matrix; can be done in parallel.
+
+  [open] Audit Group C (T cell subtypes): why does renorm under-
+         perform stale on this single group? Hypothesis: HVG with
+         batch_key='species' picks different markers than the
+         human-only HVG used in stale; the 5-flavor matrix should
+         shed light by varying flavor.
+
+  [open] Re-run stale evaluation with --where latent_space for
+         apples-to-apples comparison with renorm. Not blocking.

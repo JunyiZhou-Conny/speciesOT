@@ -1,0 +1,18 @@
+# scGen for Group B: CD8 holdout with thymocytes also excluded.
+# Strict OOD: AE never sees CD8 or thymocytes.
+data:
+  type: cell
+  source: mouse
+  target: human
+  condition: condition
+  path: datasets/speciesot-human-mouse/ae_training_cd8_nothymo_v07.h5ad
+
+dataloader:
+  batch_size: 256
+  shuffle: true
+
+datasplit:
+  groupby: condition
+  name: train_test
+  test_size: 0.2
+  random_state: 0
