@@ -38,6 +38,12 @@ archive/git_backups/
 # Anndata payloads
 *.h5ad
 
+# Checkpoint / intermediates kept under baseline (local only)
+speciesOT/baseline/results/**/*.h5ad
+speciesOT/baseline/results/**/*.pt
+speciesOT/baseline/results/**/cache/
+
+
 # Auto-generated inventories (keep scripts in repo)
 # experiments_inventory.csv
 # experiments_inventory.md
