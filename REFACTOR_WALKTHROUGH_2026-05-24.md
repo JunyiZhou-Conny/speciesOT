@@ -17,6 +17,12 @@ Working doc for the conversational walkthrough of the workspace root. One row pe
 | `logs/research_logs/` | alive | — | Personal journey record; re-read later. Logging cadence has lapsed since 2026-05-04 because user has to initiate it manually. See Pending Future Tasks for auto-logging hook. |
 | `logs/mentor_meetings/` | alive | — | Same content type as research_logs but separated when there's a presentation/ceremony attached. Naming is inconsistent (`*_slides.md` vs `MORNING_BRIEFING_*.md`) but user prefers to leave as-is. |
 | `archive/` (entire folder, including `git_backups/`, `autoresearch_nested_placeholder/`, `old_notes/`) | deleted | already done by user 2026-05-25 | Permanently gone for gitignored content (~417 MB freed). The 3 `old_notes/*` files show as tracked deletions in git and are recoverable from history. |
+| `scripts/` runtime artifacts (`.pid`, `.log`, `__pycache__/`) and tracked caches (`.bcg_*.csv`, `.biomart_*.csv`) | done | committed in batch 2 (`bcce463`) | -24,904 lines. Caches now gitignored. |
+| `scripts/generate_data_space_eval_sbatches.py` | alive (provisional) | — | Generates 80 eval sbatches over flavor × group × mode × model. `--setting ood` is intentional (always eval on held-out cells; see `docs/conceptual_framework.md` §5.4). Identifies model only by path (no upfront check that training exists). Strong candidate for cookbook consolidation. |
+| `scripts/generate_atlas_full_configs.py` | alive (provisional) | — | Generates configs + sbatches for "full atlas, no holdout" training (notebook 15's territory). 2 flavors × 2 models = 4 trainings. Uses `datasplit.name: train_test` (no toggle). Has a small bit of helpful abstraction (`_sbatch_header` helper, `PREAMBLE` constant) — seeds for the cookbook. Candidate for cookbook consolidation. |
+| `scripts/generate_toggle_configs.py` | **delete** (fossil) | `git rm scripts/generate_toggle_configs.py` | Tracked in git → recoverable. Generator's outputs (data files, scgen + impact models) remain useful for monocyte-axis groups (m1, m3, m4) that the hvg_flavor matrix doesn't cover. |
+| `cellot/cellot_gpu/results/toggle_*/cellot/` (16 abandoned cell-type-framing model dirs, ~400 MB total, gitignored) | **archive — pending a/b** | (a) move to `cellot/cellot_gpu/results/_archive/toggle_cellot_subdirs/`; (b) delete outright | User confirmed framing is abandoned; choice of move vs. delete depends on whether the GPU-hours are worth preserving for retrospective comparison. |
+| `cellot/cellot_gpu/results/toggle_*/{scgen,impact}/` | alive, keep | (queued) rename `impact/ → impact_cellot/` in a later batch when we're ready for live-dir renames | Models for the monocyte groups (m1, m3, m4) are unique to the toggle line and worth preserving. |
 
 ---
 
@@ -52,6 +58,38 @@ Working doc for the conversational walkthrough of the workspace root. One row pe
 
 **Sketch**: use a Cursor session-end hook to invoke a small agent that summarizes the session and appends to `logs/research_logs/research_log_YYYY-MM-DD.txt` (creating the file if it doesn't exist).
 
+### Smaller task: Config glossary doc
+
+Add `docs/config_glossary.md` listing every config knob that appears in our auto-generated `config.yaml` files (e.g. `datasplit.name`, `model.name`, `data.ae_emb.path`, `data.type`, `training.n_inner_iters`), with for each: one-line description, set of valid values (if discrete), and a link to the consumer function in the library (e.g. `cellot/cellot_gpu/cellot/data/cell.py:split_cell_data`). Saves having to do a from-scratch grep every time someone asks "what does `toggle_ood` mean?"
+
+Existing minor naming gotcha worth fixing alongside: in `split_cell_data_toggle_ood`, variables `trainobs`/`testobs` (line 340) are mislabeled — they're really "first half" / "second half" of the holdout cells, not train/test.
+
+### Separate project: Declarative experiment-spec system ("the cookbook"; proposed by user 2026-05-25)
+
+**Motivation**: today every new experiment shape requires a new `generate_*.py` that is essentially a fork of an existing one with config templates copy-pasted and a few values changed. There is no shared abstraction layer. Each generator hard-codes its sbatch template inline and hard-codes its flavor/group/mode/model lists as module constants. `generate_atlas_full_configs.py` explicitly documents itself as a diff against `generate_hvg_flavor_configs.py`. This means the user cannot describe a new experiment without writing (or having an agent write) a new generator.
+
+**Target workflow**:
+1. User describes the experiment in a declarative spec — either a YAML file or a short conversation: "OOD setting, holdout = CD8, HVG flavor = pearson_residuals, model = impact_cellot, n_iters = 50000".
+2. A single experiment-factory consumes the spec and produces: data-prep step pointer (which notebook), training configs (one per model variant), training sbatches, eval sbatches (data-space + latent-space as requested), expected output paths, an entry in the model-card hub (see separate project).
+3. The factory composes from a "cookbook" of small reusable building blocks: `make_sbatch_header(name, time, mem, gpu)`, `materialize_config(template, overrides)`, `chain_with_afterok(jobs)`, `expected_results_path(spec)`, etc.
+
+**Spec vocabulary (initial)**:
+- `model_variant ∈ {impact_cellot, scgen}`
+- `condition ∈ {species, cell_type}`  (cell_type is the abandoned framing; kept for backwards compat)
+- `holdout`: cell-ontology ID or list
+- `also_exclude`: optional second cell-ontology ID
+- `hvg_flavor ∈ {pearson_residuals, seurat_v3, seurat_v3_paper, cell_ranger, seurat}`
+- `framing ∈ {iid, ood}`
+- `n_iters`, `batch_size`, `lr`, …
+- Output-space evaluation: `data_space` and/or `latent_space`, plus `n_cells` schedule.
+
+**Implication for the current walkthrough**: when we walk `scripts/`, we should *not* try to refactor the generators into shared components yet. Inventory and understand first; the cookbook is a separate project after this walkthrough completes.
+
+## Deferred for now
+
+- **Tier 2 subfolder reorg of `scripts/`** (`generate/`, `submit/`, `render/`, `watch/`, `inventory/`): blocked on completing the script-by-script walk. User likes the idea but wants to know what each file does before moving things.
+- **Resolution of the `scripts/` vs `speciesOT/scripts/` duplication**: blocked on walking into the inner package. Will diff the two directories when we get to `speciesOT/`.
+
 ---
 
 ## Cross-cutting workstream: model-framing naming convention
@@ -78,6 +116,8 @@ As we walk each folder, every occurrence of stale labels gets flagged here for b
 ### Flagged occurrences (populate as we walk)
 - `speciesOT/baseline/results/speciesot_cd8/cellot/evals_ood_data_space/imputed.h5ad` — old `cellot/` subdir (likely the abandoned cell-type-framing variant, or the pre-rename IMPACT variant — confirm when we reach `speciesOT/`).
 - `speciesOT/baseline/results/speciesot_cd8/impact_or/evals_ood_data_space/imputed.h5ad` — old `impact_or/` subdir (semantics unclear; possibly "IMPACT, OOD reverse"? confirm with user).
+- `cellot/cellot_gpu/results/toggle_*/{impact,cellot}/` — 16 experiments × 2 stale subdir names. The `impact/` subdir should become `impact_cellot/` (alive, just renamed). The `cellot/` subdir is the abandoned cell-type-framing variant — archive or delete after user confirms no recent references.
+- `scripts/generate_toggle_configs.py` writes the stale subdir names — the f-string templates use `impact` and `cellot` bare (lines 260, 271–272, 278). If we keep the script alive, those names should be updated alongside the directory rename.
 - *Continue populating as we visit each folder.*
 
 ---
@@ -90,9 +130,10 @@ As we walk each folder, every occurrence of stale labels gets flagged here for b
 
 ---
 
+## Commit history
+
+- `4200f8e` — **Batch 1** (workspace-root cleanup): rename `reference/` → `reference_papers/`, delete `autospeciesOT/`, delete `logs/NOTEBOOK_INDEX.md`, delete `archive/old_notes/*` (3 files), add `docs/conceptual_framework.md`, add `REFACTOR_WALKTHROUGH_2026-05-24.md`. (~1,700 lines removed, ~290 added.)
+
 ## Queue of moves/renames to apply in next batch
 
-- [ ] `git mv reference reference_papers`
-- [ ] After the above rename, update the two relative links in `docs/conceptual_framework.md` (References section + image links) from `../reference/...` to `../reference_papers/...`.
-- [ ] `git rm -r autospeciesOT/`
-- [ ] `git rm logs/NOTEBOOK_INDEX.md`
+- *empty — will fill as we walk `scripts/` and subsequent folders.*

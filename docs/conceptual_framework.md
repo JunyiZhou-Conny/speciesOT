@@ -43,14 +43,21 @@ This is what CellOT was published to do. The biological claim is: *given a contr
 | **Source cloud** | Non-CD8 cells (a large pool of many other cell types) |
 | **Target cloud** | CD8 T cells |
 | **Condition** | Cell type (everything else vs. CD8) |
-| **OOD generalization tested along** | Predict CD8 from a never-before-seen non-CD8 cell |
+| **OOD generalization tested along** | A held-out **species** (train on mouse, test on human) — see below |
 
-We tried this framing in early experiments. It was abandoned for two reasons:
+We tried this framing in early experiments. The on-disk fossil evidence lives at `cellot/cellot_gpu/results/toggle_*/cellot/`. Notably, the OOD test for these experiments held out *species*, not *cell type*: the model was trained to learn non-CD8 → CD8 on **mouse cells only** (where both clouds are available), then evaluated by transporting human non-CD8 cells and comparing to actual human CD8 cells. So two axes of generalization were being conflated:
+
+1. The cell-type-transformation hypothesis (non-CD8 → CD8 is a learnable map at all).
+2. The cross-species transferability hypothesis (a map learned on mouse cell types applies to human cell types).
+
+In the corresponding YAML configs this showed up as `datasplit.key: species` and `datasplit.holdout: 'human'`, paired with `data.source: non_{label}` / `data.target: {label}`.
+
+It was abandoned for two reasons:
 
 1. **Huge size imbalance.** Non-CD8 vastly outnumbers CD8 in any atlas dataset. OT can still solve this mathematically, but with ICNN-based *deterministic* maps it forces a many-to-one squash from the large source cloud to the small target cloud, which is not a meaningful biological statement (it isn't saying "this monocyte becomes that CD8 cell" — that's not how cell identity works).
-2. **No coherent biological question.** Treating "the other cell types" as if they were the "control" version of CD8 cells doesn't correspond to any real intervention. Cell types are not perturbations of each other.
+2. **No coherent biological question.** Treating "the other cell types" as if they were the "control" version of CD8 cells doesn't correspond to any real intervention. Cell types are not perturbations of each other. The conflation of the two generalization axes also made it hard to interpret what a positive result would mean.
 
-**Status:** dead. Any code or notebook references to this framing (likely tagged `cellot` in dict keys, or `paper_style` / `condition=cell_type` in old configs) are stale.
+**Status:** dead. Any code or notebook references to this framing (subdirs named `cellot/` next to `impact/` and `scgen/` under `cellot/cellot_gpu/results/toggle_*/`, configs with `datasplit.key: species`, paths containing `_holdout_swapped_v07.h5ad`) are stale.
 
 ### 1.3 IMPACT_CellOT — species effect (current main task)
 
@@ -170,7 +177,25 @@ The column `r2-means` in `evals.csv` is the **Pearson correlation r of mean expr
 
 See `08.1_renorm_vs_stale_comparison.ipynb` for the head-to-head. The current pipeline uses the **renorm** preparation.
 
-### 5.4 The latent-space-vs-data-space evaluation choice
+### 5.4 `mode` (training) vs `--setting` (evaluation) — the OOD-word overload
+
+The word "OOD" is used in two different places in the pipeline and they mean different things:
+
+| Term | Lives in | Refers to |
+|---|---|---|
+| **`mode`** (`iid` or `ood`) | `generate_*_configs.py`, sbatch tags, results directory names like `hvg_seurat_d_iid/` | **What data was used to train** the model. `ood`: the held-out cell type was completely excluded from training. `iid`: the "ignored" half of the held-out cell type was added back into training. |
+| **`--setting`** (`iid` or `ood`) | `evaluate.py` CLI flag | **Which slice of the dataset to evaluate on**. `iid`: the standard test split (random cells from in-training cell types). `ood`: the held-out cell type, test half. |
+
+**In current practice, we always evaluate with `--setting ood`** — that is, we always measure performance on the held-out cell type, regardless of training mode. This means:
+
+- IID-trained + `--setting ood` evaluation: the model has seen similar cells (the "ignored" half of the holdout) during training, so this is closer to in-sample fit. Useful as an upper bound.
+- OOD-trained + `--setting ood` evaluation: the model has never seen any cells of the held-out type. This is true generalization.
+
+The difference between the two is roughly **the generalization gap**.
+
+This overload is confusing on first read (an "IID-mode" sbatch that calls `--setting ood` looks like a bug; it isn't). The cookbook should normalize the vocabulary so users describe what they want without having to remember the overload — e.g. `train_includes_holdout: bool` and `eval_on: held_out_celltype | in_training_celltype`.
+
+### 5.5 The latent-space-vs-data-space evaluation choice
 
 CellOT's natural output space is the **latent** space defined by an autoencoder it's trained against. Evaluations can be done in latent space (cheaper, smoother) or by decoding back to **data space** (gene expression — harder, but biologically interpretable). Older runs evaluated in latent space for stale data and data space for renorm data, possibly for historical reasons. *Junyi flagged this as a choice he can no longer fully reconstruct — worth re-examining when revisiting `08.1`.*
 
