@@ -20,9 +20,14 @@ Working doc for the conversational walkthrough of the workspace root. One row pe
 | `scripts/` runtime artifacts (`.pid`, `.log`, `__pycache__/`) and tracked caches (`.bcg_*.csv`, `.biomart_*.csv`) | done | committed in batch 2 (`bcce463`) | -24,904 lines. Caches now gitignored. |
 | `scripts/generate_data_space_eval_sbatches.py` | alive (provisional) | — | Generates 80 eval sbatches over flavor × group × mode × model. `--setting ood` is intentional (always eval on held-out cells; see `docs/conceptual_framework.md` §5.4). Identifies model only by path (no upfront check that training exists). Strong candidate for cookbook consolidation. |
 | `scripts/generate_atlas_full_configs.py` | alive (provisional) | — | Generates configs + sbatches for "full atlas, no holdout" training (notebook 15's territory). 2 flavors × 2 models = 4 trainings. Uses `datasplit.name: train_test` (no toggle). Has a small bit of helpful abstraction (`_sbatch_header` helper, `PREAMBLE` constant) — seeds for the cookbook. Candidate for cookbook consolidation. |
-| `scripts/generate_toggle_configs.py` | **delete** (fossil) | `git rm scripts/generate_toggle_configs.py` | Tracked in git → recoverable. Generator's outputs (data files, scgen + impact models) remain useful for monocyte-axis groups (m1, m3, m4) that the hvg_flavor matrix doesn't cover. |
-| `cellot/cellot_gpu/results/toggle_*/cellot/` (16 abandoned cell-type-framing model dirs, ~400 MB total, gitignored) | **archive — pending a/b** | (a) move to `cellot/cellot_gpu/results/_archive/toggle_cellot_subdirs/`; (b) delete outright | User confirmed framing is abandoned; choice of move vs. delete depends on whether the GPU-hours are worth preserving for retrospective comparison. |
+| `scripts/generate_toggle_configs.py` | deleted (batch 3) | committed `17562ba` | Tracked in git → recoverable. Generator's outputs (data files, scgen + impact models) remain useful for monocyte-axis groups (m1, m3, m4) that the hvg_flavor matrix doesn't cover. |
+| `cellot/cellot_gpu/results/toggle_*/cellot/` (16 abandoned cell-type-framing model dirs, 53 MB) | moved to archive (batch 3) | now at `cellot/cellot_gpu/results/_archive/toggle_cellot_subdirs/toggle_*/cellot/` | Disk-only move (path is gitignored). Kept for retrospective comparison. |
 | `cellot/cellot_gpu/results/toggle_*/{scgen,impact}/` | alive, keep | (queued) rename `impact/ → impact_cellot/` in a later batch when we're ready for live-dir renames | Models for the monocyte groups (m1, m3, m4) are unique to the toggle line and worth preserving. |
+| `scripts/generate_hvg_flavor_configs.py` | alive (active) | — | Source of truth for the active matrix (88 trainings, 176+ sbatches). Most-evolved generator: has `_sbatch_header`, `PREAMBLE`, three sbatch-body generators (`_train_sbatch`, `_eval_sbatch`, `_eval_dataspace_sbatch`). Config YAMLs still inline f-strings (copy-paste-prone — same template appears here AND in `generate_atlas_full_configs.py`). Notable overlap with script 1 on eval_dataspace generation: this script's `_eval_dataspace_sbatch` hard-codes `--n_cells 30,50,80` while script 1 uses a per-group dict (more careful). When cookbook consolidates, keep per-group n_cells logic. |
+| `scripts/regenerate_hvg_flavor_run_matrix.py` | alive (active, slated for retirement) | — | Generates `hvg_flavor_run_matrix.{csv,md}` — an 80-row manifest of the active matrix with per-flavor input-layer + raw-counts-required metadata. Prototype-grade model-card hub for the hvg_flavor matrix only. **Will be subsumed by the model-card hub when built; delete then.** Has a parallel source-of-truth issue with `generate_hvg_flavor_configs.py` (both encode FLAVORS/GROUPS/MODES); not worth pre-refactoring since hub will absorb both. |
+| `scripts/build_experiments_inventory.py` | alive (active, slated for retirement) | — | Generates `experiments_inventory.{csv,md}` at workspace root — a hand-curated forensic catalog of every CellOT/IMPACT/scGen run across every project phase (legacy_crossspecies, speciesot_v1, toggle, renorm, hvg matrix). Contains the only canonical `ALIAS_TABLE` mapping every old name to current canonical. **Will be subsumed by the model-card hub; deletion BLOCKED until `ALIAS_TABLE` and per-phase context overrides (lines 193–198) are ported into the hub design.** See hub project requirements. |
+| `scripts/render_results_figures.py` | alive (active, slated for retirement) | — | Standalone Agg-backend renderer for the matrix headline figures (5 PDFs/PNGs under `hvg_flavor_results_outputs/figures/`). Mirrors notebook 13 logic but headless — was called by `refresh_results_loop.sh`. Properly squares Pearson-r to R² (bug fix documented in script docstring and in `docs/conceptual_framework.md` §5.5). **Deletion BLOCKED**: the bottom half of the file (lines 268+, "Reusable presentation functions" — `plot_metric_bars`, `plot_marginals_paper_style`, etc.) is *imported by notebook 18*. Port those functions into the hub's plotting library (or `speciesOT/lib/plotting.py`) before deleting. Third copy of FLAVORS/GROUPS/MODES source-of-truth — same matrix-definition duplication the hub will absorb. |
+| `scripts/biomart_watchdog.py`, `scripts/refresh_results_loop.sh`, `scripts/run_full_pipeline.sh`, `scripts/submit_hvg_flavor_matrix.sh`, `scripts/predict_new_input.sh` | walkthrough deferred (architectural call) | — | Not walked individually. All five belong to the hub-absorption bucket (Group D watchers → hub v2 lifecycle; Group E drivers → hub v2 submission CLI; `predict_new_input.sh` may stay as a thin shim). When we build the hub, address each in v2's design. Out-of-scope for the rest of this walkthrough. |
 
 ---
 
@@ -49,6 +54,40 @@ Working doc for the conversational walkthrough of the workspace root. One row pe
 | Status | active / archived / failed / superseded |
 
 **Inspired by**: HuggingFace model cards. Form factor TBD: a richer CSV, one markdown card per model, SQLite + viewer, or a static mkdocs site.
+
+**Per-model-variation deltas as first-class metadata** (added 2026-05-27 per user): a lot of the value of the hub is making *small differences* between trained models legible at a glance. Examples we've already encountered:
+- Eval `n_cells` schedule per group (`30,50,80` vs `20,30,40` for group `d` because of pool size).
+- HVG flavor (`seurat_v3` vs `pearson_residuals` vs `cell_ranger` ...).
+- Whether the holdout cells' "ignored" half got folded into training (`mode: iid`) or stayed out (`mode: ood`).
+- ICNN hyperparameters (`hidden_units`, `n_inner_iters`, `kernel_init_fxn.b`).
+- Optimizer betas tuned for min-max stability (`beta1: 0.5` instead of Adam-default `0.9`).
+- Data preprocessing version tag (`v07`, etc.).
+- Whether an experiment was run from `generate_hvg_flavor_configs.py` (active) or the older fossil `generate_toggle_configs.py`.
+
+The cookbook spec should *write* these as structured fields, and the hub should *display* them as columns/rows so two near-identical experiments can be compared without opening their configs.
+
+**Critical pre-deletion dependency** (added 2026-05-27): the `ALIAS_TABLE` in `scripts/build_experiments_inventory.py` (lines 120–139) plus the per-phase `cellot` disambiguation overrides (lines 193–198) encode the only canonical mapping from old alias names to current canonical names. They are also reproduced in `docs/conceptual_framework.md` §2.1, but the *script*-form is what auto-discovery needs. **Port this table into the hub's discovery code before deleting `build_experiments_inventory.py`.**
+
+### Hub absorption roadmap — phased plan to retire `scripts/`
+
+Added 2026-05-27 after user confirmed the end-state intent ("once the hub is built, can we get rid of everything in scripts/?"). Yes. Phased plan:
+
+**End state (north star)**: `scripts/` is mostly empty — maybe 1–3 thin entry-point shims (e.g. a `bash predict_new_input.sh ...` wrapper that calls `hub` under the hood). All domain logic lives in `speciesOT/hub/` (or similar). `sbatch/` is no longer a hand-maintained source-of-truth — it's a hub-internal materialization. Data-prep notebooks, docs, mentor meetings, research logs all stay outside the hub.
+
+**Phasing**:
+
+| Milestone | Replaces | Effort | What it does |
+|---|---|---|---|
+| **v0 — read-only catalog** | `build_experiments_inventory.py`, `regenerate_hvg_flavor_run_matrix.py` | 1–2 days | Auto-discovers every `results/<exp>/<model>/` dir, reads configs + evals.csv + cache/status, presents as a single browsable index. Includes the ported `ALIAS_TABLE` + per-phase disambiguation. Doesn't change anything — just sees what's there. Biggest immediate win: one place to compare models. |
+| **v1 — spec-driven generator** | `generate_atlas_full_configs.py`, `generate_data_space_eval_sbatches.py`, `generate_hvg_flavor_configs.py` | 3–5 days | A `Spec` dataclass + an `experiment_factory(spec)` that materializes configs and sbatches. Behind the scenes still writes the same files; from the user side, you write a 10-line YAML instead of forking a 355-line generator. Per-group `n_cells` becomes a first-class spec field (not hard-coded in two different places). |
+| **v2 — submission & lifecycle** | `submit_hvg_flavor_matrix.sh`, `run_full_pipeline.sh`, `biomart_watchdog.py`, `refresh_results_loop.sh` | ~1 week | Submit jobs with afterok deps, track status, retry failed, run periodic refresh. Hub becomes the experiment runtime. |
+| **v3 — viewer + figures** | `render_results_figures.py` | TBD | Static site or simple dashboard rendering hub catalog + experiment-detail pages with figures on demand. |
+
+Each milestone is independently useful. v0 alone retires two scripts and the inventory CSV pain — recommended as the first concrete hub work after this walkthrough finishes.
+
+**Scripts that stay outside the hub** (or become thin shims):
+- `predict_new_input.sh` — new-user CLI entry point; might keep as a 5-line wrapper around a hub subcommand.
+- Anything that's specifically about cluster/conda environment activation (module loads, mamba activate) is sysadmin-y — could live in `bin/` rather than the hub.
 
 **Implication for the current walkthrough**: when we reach `cellot/cellot_gpu/results/` and `experiments_inventory.{csv,md}`, every keep/archive decision should be made with the hub in mind — anything kept should be representable as a model-card row.
 
@@ -107,17 +146,17 @@ Settled convention (from `presentation_preparation.ipynb`, most up-to-date noteb
 
 As we walk each folder, every occurrence of stale labels gets flagged here for batch-rename later (not in-place during the walkthrough).
 
-### Stale terms to watch for (extend this list as we walk)
-- `cellot` (when used as a path component or dict key meaning "the IMPACT framing model variant") → `impact_cellot`
-- `paper_style`, `cellot_paper`, similar tags meaning "the original-CellOT framing" → decision pending (likely `paper_cellot` if it ever needs a code identifier; may not exist anywhere in current code)
-- `impact_or` (e.g. `interactive_impact_or.html`, `interactive_umap_impact_or.html` under `speciesOT/baseline/analysis/`) → `impact_cellot` if same thing
-- `--model-framing impact` (CLI flag, was in `autospeciesOT/run_experiment.py`, now deleted) → N/A after deletion
+### Stale terms (alias-resolution from `build_experiments_inventory.py:ALIAS_TABLE`; full table also lives in `docs/conceptual_framework.md` §2.1)
+- `impact`, `impact_or`, `swapped_cellot`, `speciesot_cellot` → all = `impact_cellot`
+- `cellot` (context-dependent — see §2.1 of conceptual doc): in `toggle` or `speciesot_v1_iter2_*` phase = abandoned cell-type framing; in `legacy_crossspecies` phase = raw-HVG 1000-dim CellOT.
+- `speciesot_cellot_swapped`, `normal_cellot` → abandoned cell-type-framing CellOT
+- `speciesot_scgen` → `scgen`
 
 ### Flagged occurrences (populate as we walk)
-- `speciesOT/baseline/results/speciesot_cd8/cellot/evals_ood_data_space/imputed.h5ad` — old `cellot/` subdir (likely the abandoned cell-type-framing variant, or the pre-rename IMPACT variant — confirm when we reach `speciesOT/`).
-- `speciesOT/baseline/results/speciesot_cd8/impact_or/evals_ood_data_space/imputed.h5ad` — old `impact_or/` subdir (semantics unclear; possibly "IMPACT, OOD reverse"? confirm with user).
-- `cellot/cellot_gpu/results/toggle_*/{impact,cellot}/` — 16 experiments × 2 stale subdir names. The `impact/` subdir should become `impact_cellot/` (alive, just renamed). The `cellot/` subdir is the abandoned cell-type-framing variant — archive or delete after user confirms no recent references.
-- `scripts/generate_toggle_configs.py` writes the stale subdir names — the f-string templates use `impact` and `cellot` bare (lines 260, 271–272, 278). If we keep the script alive, those names should be updated alongside the directory rename.
+- `speciesOT/baseline/results/speciesot_cd8/impact_or/evals_ood_data_space/imputed.h5ad` → `impact_or` = `IMPACT_CellOT`. Resolved.
+- `speciesOT/baseline/results/speciesot_cd8/cellot/evals_ood_data_space/imputed.h5ad` → bare `cellot` in speciesot_v1 path = abandoned cell-type framing. Bucket TBD when we walk `speciesOT/` (likely archive next to the toggle_cellot_subdirs).
+- `cellot/cellot_gpu/results/toggle_*/impact/` (16 dirs) — `impact` = `impact_cellot`. **Queued rename** for a future batch.
+- `cellot/cellot_gpu/results/toggle_*/cellot/` (16 dirs) — archived in batch 3 to `_archive/toggle_cellot_subdirs/`.
 - *Continue populating as we visit each folder.*
 
 ---
@@ -133,6 +172,8 @@ As we walk each folder, every occurrence of stale labels gets flagged here for b
 ## Commit history
 
 - `4200f8e` — **Batch 1** (workspace-root cleanup): rename `reference/` → `reference_papers/`, delete `autospeciesOT/`, delete `logs/NOTEBOOK_INDEX.md`, delete `archive/old_notes/*` (3 files), add `docs/conceptual_framework.md`, add `REFACTOR_WALKTHROUGH_2026-05-24.md`. (~1,700 lines removed, ~290 added.)
+- `bcce463` — **Batch 2** (scripts/ runtime junk): drop scripts/ .pid/.log/__pycache__ artifacts; untrack 1.2 MB of BioMart caches (`.bcg_*.csv`, `.biomart_*.csv`) and add gitignore rules so they stay untracked.
+- `17562ba` — **Batch 3** (toggle fossil archive): delete `scripts/generate_toggle_configs.py` (fossil); move 16 abandoned `cellot/` subdirs into `cellot/cellot_gpu/results/_archive/toggle_cellot_subdirs/` (53 MB, disk-only); update `docs/conceptual_framework.md` §1.2 to clarify the cell-type framing's species-holdout structure.
 
 ## Queue of moves/renames to apply in next batch
 

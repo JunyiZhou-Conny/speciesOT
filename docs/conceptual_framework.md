@@ -104,6 +104,29 @@ This is why the renaming workstream exists: any older variable named `cellot` (o
 | Code identifiers (path components, dict keys, CLI flags, variable names) | lowercase + underscore | `impact_cellot`, `scgen` |
 | Display labels (figure legends, tables, prose) | preserved capitalization | `IMPACT_CellOT`, `scGen` |
 
+### 2.1 Alias history — translation table for old names
+
+The repo has accumulated several alias names for the same three model families across different project phases. This table maps **every alias** to the current canonical name. Source of truth: the `ALIAS_TABLE` in `scripts/build_experiments_inventory.py`.
+
+| Canonical family | Aliases seen in old paths, configs, and filenames |
+|---|---|
+| **scGen** (current name: `scgen`) | `scgen`, `speciesot_scgen`, "autoencoder" (informal) |
+| **IMPACT_CellOT** (current name: `impact_cellot`) | `impact`, `impact_or`, `swapped_cellot`, `speciesot_cellot` |
+| **CellOT (abandoned cell-type framing)** | `cellot` (in `speciesot_v1_iter2_*` or `toggle` phases), `speciesot_cellot_swapped`, `normal_cellot` |
+| **CellOT (legacy crossspecies)** — raw 1000-dim ortholog space, no scGen | `cellot` (only in `legacy_crossspecies` phase, top-level `cross_species_ood/` and `race_*/` dirs) |
+
+**Context-dependent disambiguation**: the directory or dict-key name `cellot` alone is ambiguous because it has meant three different things at different project phases. To resolve it, check:
+
+- Phase = `legacy_crossspecies` (e.g. `cellot/cellot_gpu/results/cross_species_ood/`) → raw-HVG CellOT, no scGen sibling.
+- Phase = `speciesot_v1_iter2_groupA` or `toggle` → abandoned cell-type framing (`datasplit.key: species`, `holdout: 'human'`, paths containing `_holdout_swapped_v07.h5ad`).
+- Otherwise (current pipelines) → if next to an `impact_cellot/` sibling, the bare `cellot/` is the abandoned cell-type framing; if it's the only model subdir, check the config's `condition` field to disambiguate.
+
+**Where you'll see these old aliases on disk today**:
+- `speciesOT/baseline/results/speciesot_cd8/impact_or/evals_ood_data_space/imputed.h5ad` — `impact_or` = `IMPACT_CellOT`.
+- `speciesOT/baseline/results/speciesot_cd8/cellot/evals_ood_data_space/imputed.h5ad` — bare `cellot` in this speciesot_v1 path = abandoned cell-type framing.
+- `cellot/cellot_gpu/results/_archive/toggle_cellot_subdirs/toggle_*/cellot/` — already archived (batch 3); abandoned cell-type framing.
+- `cellot/cellot_gpu/results/toggle_*/impact/` — `impact` = `IMPACT_CellOT`; queued for rename in a future batch.
+
 ---
 
 ## 3. The ultimate goal — and where we are today
