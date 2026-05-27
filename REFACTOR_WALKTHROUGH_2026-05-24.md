@@ -138,6 +138,25 @@ Existing minor naming gotcha worth fixing alongside: in `split_cell_data_toggle_
 
 - **Tier 2 subfolder reorg of `scripts/`** (`generate/`, `submit/`, `render/`, `watch/`, `inventory/`): blocked on completing the script-by-script walk. User likes the idea but wants to know what each file does before moving things.
 
+## Research-correctness findings (do not lose)
+
+### `--embedding ae` / `--where` mis-coupling — symmetric bug pair (discovered 2026-05-27)
+
+Two mirror bugs sharing the same root cause:
+
+- **IMPACT_CellOT + `--where data_space` without `--embedding ae`** → silently produces 50-d latent output into a directory named `evals_ood_data_space/`. The 80 standard `eval_dataspace/` sbatches hit this. The 10 `eval_dataspace_aeflag/` + 8 m2 sbatches (with the flag) produce correct 1000-d gene-space output.
+- **scGen + `--where latent_space` without `--embedding ae`** → silently produces 1000-d gene-space output into a directory named `evals_ood_latent_space/`. Symmetric mirror.
+
+**Root cause**: `load_projectors` (lib evaluate.py lines 100–108) returns identity functions for both `encode` and `decode` when `embedding=None`, regardless of `--where`. The cellot model's natural space is latent (because `ae_emb` in config makes the loader pre-encode), scGen's natural space is data (no `ae_emb`); `--embedding ae` is what "switches" away from each model's natural space, and without it, `--where` is silently ignored.
+
+**Why the bug is visible in our project**: the upstream Bunne code had an auto-detect at lib evaluate.py:275 that reads `model-cellot/` sibling's config to infer `embedding`. Our project renamed `model-cellot/` to `impact_cellot/` (deliberately, for IMPACT framing clarity), which disabled the auto-detect and surfaced the latent bugs. The bug was latent in the upstream design; our naming change *exposed* it.
+
+**Universal rule going forward**: every sbatch should pass `--embedding ae` except IMPACT_CellOT + `--where latent_space` (which triggers a column-count assertion crash, and we don't run that combination anyway in practice).
+
+**Implications**: standard-matrix R² heatmaps compare scGen-in-gene-space against IMPACT_CellOT-in-latent-space. Not directly comparable. The IMPACT side of every standard data-space eval needs re-running with `--embedding ae` to fix.
+
+**Status**: documented in `docs/conceptual_framework.md` §5.5 (symmetric framing + upstream auto-detect explanation + spot-check data + universal rule). User confirmed re-runs deferred for now. The hub's eval spec must encode this dependency.
+
 ## Resolved (during 2026-05-27 unattended work): scripts/ vs speciesOT/scripts/ duplication
 
 **Finding**: the inner `speciesOT/scripts/` is a *stale, redundant* copy of the outer `scripts/`. All 11 common scripts are **byte-identical** between the two (verified by `diff -q`). The inner has:

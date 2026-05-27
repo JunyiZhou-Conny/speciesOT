@@ -218,7 +218,92 @@ The difference between the two is roughly **the generalization gap**.
 
 This overload is confusing on first read (an "IID-mode" sbatch that calls `--setting ood` looks like a bug; it isn't). The cookbook should normalize the vocabulary so users describe what they want without having to remember the overload — e.g. `train_includes_holdout: bool` and `eval_on: held_out_celltype | in_training_celltype`.
 
-### 5.5 The latent-space-vs-data-space evaluation choice
+### 5.5 The `--embedding ae` flag is mis-coupled to `--where data_space` (real-correctness bug)
+
+This is a subtle but consequential evaluation bug, discovered during the 2026-05-27 walkthrough. Captured here so neither future-Junyi nor a future agent has to re-derive it.
+
+#### What `evaluate.py --where data_space` is supposed to mean
+
+The output dimensionality of an evaluation: `data_space` ⇒ compare predictions to ground truth in 1000-dim gene-expression space; `latent_space` ⇒ compare in 50-dim AE-latent space. The output directory inherits the flag name (`evals_ood_data_space/`, `evals_ood_latent_space/`).
+
+#### What it actually does for IMPACT_CellOT (the bug)
+
+Without `--embedding ae`, the call to `load_projectors(aedir, embedding=None, where=...)` returns **identity** functions for both `encode` and `decode` (`evaluate.py` lines 100–108). So:
+
+- The data loader sees `ae_emb` in IMPACT_CellOT's config and silently replaces `data.X` with 50-dim AE-encoded latents (`cellot/data/cell.py` lines 149–178). Every split — train, test, ood — gets the AE encoding applied. Ground truth (`dataset.ood.target.adata.to_df()`) ends up **50-d**.
+- The model transports `to_pushfwd` (50-d) → `imputed` (50-d).
+- Line 342: `if config.model.name == "cellot" and where == "data_space": imputed = decode(imputed)` — but `decode` is the identity, so `imputed` stays **50-d**.
+- Comparison happens in **50-dim latent space**, despite the output path being named `evals_ood_data_space/`.
+
+Only when `--embedding ae` is *also* passed does the elif at line 204 trigger: deep-copy the config, `del config.data.ae_emb`, reload the dataset → ground truth becomes raw 1000-d; `decode` becomes the real AE decoder; `imputed` gets decoded to 1000-d. Then the comparison is genuinely in gene space.
+
+#### What this means for scGen — the mirror bug
+
+scGen's config has no `ae_emb`. The data loader skips the AE-encoding block entirely. Ground truth stays 1000-d gene-space throughout. So scGen + `--where data_space` evaluates correctly in gene space, with or without `--embedding ae`.
+
+**But there's a symmetric mirror bug for scGen + `--where latent_space`**: without `--embedding ae`, the comparison silently stays in 1000-d gene space even though `latent_space` was requested. Trace: `encode`/`decode` are identity (line 282), control/treated stay 1000-d (no encoding triggered at lines 290–293 because `embedding != "ae"`), scGen transport produces 1000-d, no projection branch fires. Output is gene-space comparison written to a directory called `evals_ood_latent_space/`. Wrong space, correct-looking path.
+
+#### The symmetry
+
+The same root cause produces both bugs, with sides swapped:
+
+| Model | Natural space (loader's default) | To switch to other space, you must pass `--embedding ae` |
+|---|---|---|
+| IMPACT_CellOT (`ae_emb` in config) | latent (50-d) | yes, to get **data_space** |
+| scGen (no `ae_emb` in config) | data (1000-d) | yes, to get **latent_space** |
+
+In both cases, `--embedding ae` is what "switches the space" away from the model's natural default. And in both cases, the silent-bug version is: without the flag, `--where` is *ignored* and you get the natural space regardless. The cookbook spec language must require `--embedding ae` whenever the requested space differs from the model's natural default — or, more simply, always.
+
+#### Spot-check evidence (2026-05-27)
+
+Concrete file shapes confirm:
+
+```
+hvg_pearson_residuals_a_ood/impact_cellot/evals_ood_data_space/imputed.h5ad
+  /X Dataset {93, 1000}   ← aeflag run (May 8), gene space, CORRECT for data_space
+
+hvg_pearson_residuals_a_iid/impact_cellot/evals_ood_data_space/imputed.h5ad
+  /X Dataset {93, 50}     ← standard run only (May 5), LATENT space despite path name
+
+hvg_pearson_residuals_a_ood/scgen/evals_ood_data_space/imputed.h5ad
+  /X Dataset {93, 1000}   ← scGen, gene space (always)
+```
+
+Numerical Pearson-r at ncells=30, nfeatures=all (square these for R²):
+
+| Model / setup | Eval space (verified by /X shape) | r | R² |
+|---|---|---|---|
+| IMPACT a_ood (aeflag) | gene (1000-d) | 0.929 | 0.86 |
+| IMPACT a_iid (standard) | **latent (50-d)** | 0.880 | 0.77 |
+| scGen a_ood (standard) | gene (1000-d) | 0.932 | 0.87 |
+
+The IID model evaluated in latent space (0.77) is **lower** than the OOD model evaluated in gene space (0.86), which is the *opposite* of the in-sample-fit expectation — a clear sign the comparison is apples-to-oranges.
+
+#### Implications for the matrix
+
+- The 80 standard `eval_dataspace/` sbatches (from `scripts/generate_data_space_eval_sbatches.py`) **do not pass `--embedding ae`**, so their IMPACT_CellOT outputs are silently latent-space.
+- The 10 hand-curated `eval_dataspace_aeflag/` sbatches and the 8 m2 sbatches (from `generate_hvg_flavor_configs.py --m2-two-flavors`) **do pass it** — those IMPACT_CellOT outputs are genuine gene-space.
+- Standard-matrix R² heatmaps therefore compare **scGen-in-gene-space** against **IMPACT_CellOT-in-latent-space** — not directly comparable.
+
+The IMPACT side of every standard `eval_dataspace/` IMPACT cell would need re-running with `--embedding ae` to produce a clean comparison. (Junyi 2026-05-27 confirmed re-running is deferred for now; the finding is documented so it isn't lost.)
+
+#### The universal rule we adopt going forward
+
+**Always pass `--embedding ae` for every eval**, with one exception: do NOT pass it for IMPACT_CellOT + `--where latent_space` (that combination triggers the column-count assertion at `evaluate.py:130` because predictions stay 50-d while ground truth gets reloaded to 1000-d). Since we generally don't run IMPACT_CellOT latent-space evals anyway, this caveat doesn't bite in practice.
+
+The cookbook spec should encode this rule: an eval spec implies `--embedding ae` by default, and any invalid combination is rejected at spec-validation time rather than producing a wrong-space silent output.
+
+#### Why this design is unfortunate — and why we happened to find it
+
+`--where` and `--embedding` look like independent flags. They aren't — for AE-based models, `--where data_space` is silently a no-op unless `--embedding ae` is also passed. A correctly-designed CLI would either auto-detect (decode whenever an AE is in the config) or error loudly.
+
+The upstream Bunne paper code *did* have an auto-detect mechanism at `evaluate.py` lines 274–278: if `embedding` is `None`, look for a sibling directory named `model-cellot` and infer the embedding from its config. In the upstream paper's directory layout, the canonical cellot model was named `model-cellot/`, so when the user evaluated a sibling baseline (scgen/, identity/, random/, average/), the auto-detect propagated cellot's embedding choice to the baseline eval — *masking* this bug in practice.
+
+**Our project disabled that auto-detect by accident**: we named the cellot model `impact_cellot/` (deliberately, to signal IMPACT framing per §1.3 / §2 of this doc) instead of `model-cellot/`. With no `model-cellot/` sibling to read, the auto-detect at line 275 never fires, `embedding` stays `None`, and both bugs become visible.
+
+So the bug isn't a defect we introduced — it was latent in the upstream design, *masked* by the upstream naming convention. Our naming improvement (which has its own good reasons) is what surfaced it. The proper fix is to make the dependency explicit in the sbatch and in the spec, not to revert the naming. Or, as a one-line-per-experiment workaround, we could add `ln -s impact_cellot model-cellot` in each experiment dir to re-enable the auto-detect; this is a quick fix for the existing 80 sbatches but not the right long-term answer.
+
+### 5.6 The latent-space-vs-data-space evaluation choice
 
 CellOT's natural output space is the **latent** space defined by an autoencoder it's trained against. Evaluations can be done in latent space (cheaper, smoother) or by decoding back to **data space** (gene expression — harder, but biologically interpretable). Older runs evaluated in latent space for stale data and data space for renorm data, possibly for historical reasons. *Junyi flagged this as a choice he can no longer fully reconstruct — worth re-examining when revisiting `08.1`.*
 
