@@ -256,7 +256,34 @@ These are things I'd want to know before starting v0 implementation:
 4. **What about evaluation_id?** Two evals at different `n_cells` are different records. Should they share a `model.run_id` parent and have their own `eval_id`? I think yes — the 1:N relationship you flagged on 2026-05-27 fits this exactly.
 5. ~~Do you want to include `speciesOT/baseline/results/` in scope?~~ **Resolved 2026-05-27**: yes, include everything; `speciesOT/baseline/results/` is a discovery root alongside `cellot/cellot_gpu/results/`. The dir is essentially frozen historical — no new writes go there; all future results land in `cellot/cellot_gpu/results/`.
 
-## 12. What this doc is NOT
+## 12. How the cookbook (v1) collapses CellOT's three-layer YAML system
+
+(Captured 2026-05-27 — relevant for v1's design, scoped out of v0.)
+
+The upstream CellOT codebase has three YAML layers:
+
+1. **Task templates** in `cellot/cellot_gpu/configs/tasks/*.yaml` — `data:`, `dataloader:`, `datasplit:` blocks.
+2. **Model templates** in `cellot/cellot_gpu/configs/models/*.yaml` — `model:`, `optim:`, `scheduler:`, `training:` blocks.
+3. **Merged config** at `cellot/cellot_gpu/results/<exp>/<model>/config.yaml` — union of Layer 1 + Layer 2 + CLI overrides.
+
+Upstream's train.py composes Layer 1 + Layer 2 at train time:
+```bash
+python ./scripts/train.py --outdir ./results/X/Y \
+    --config ./configs/tasks/A.yaml \
+    --config ./configs/models/B.yaml \
+    --config.data.target Z
+```
+
+Our current workflow already bypasses this: `scripts/generate_hvg_flavor_configs.py` writes Layer 3 directly as inline f-strings, skipping the composition. The 13 stale `speciesot-*.yaml` files were archived to `cellot/cellot_gpu/configs/tasks/_archive/speciesot_v1/` during the walkthrough (2026-05-27) for this reason.
+
+**The cookbook spec collapses all three layers into one declarative input.** The user authors one spec; the factory materializes Layer 3 internally and (optionally) records the spec alongside as provenance. The user-facing `configs/tasks/` and `configs/models/` directories disappear from the workflow — they become *internal* templates the factory composes against, never edited by hand.
+
+This means:
+- A new experiment = one spec, not "edit task template + edit model template + figure out composition + write generator."
+- The hub catalog (v0) discovers the Layer 3 files that already exist on disk. The hub generator (v1) writes new Layer 3 files from specs. Both pieces share the same understanding of the merged-config shape (the `ModelRecord` dataclass).
+- The upstream Layer 1 task templates (`4i.yaml`, `sciplex3-*.yaml`, etc.) and the `crossspecies*.yaml` ones can stay in `configs/tasks/` as inert reference material; they're not part of the cookbook's path.
+
+## 13. What this doc is NOT
 
 - Not a green-light for implementation. It's a design proposal. The user reviews, picks apart, and either approves or rewrites before any code lands.
 - Not a commitment to the exact CLI / data model. These are *first proposals* — iterate freely.

@@ -178,6 +178,22 @@ git rm -r speciesOT/scripts/
 
 ---
 
+## CellOT's three-layer YAML system (understood 2026-05-27)
+
+The upstream CellOT codebase has **three layers of YAML**, with multi-config composition at train time:
+
+| Layer | Path | Contents | Examples |
+|---|---|---|---|
+| **1: task templates** | `cellot/cellot_gpu/configs/tasks/*.yaml` | `data:`, `dataloader:`, `datasplit:` (no model info) | `4i.yaml`, `crossspecies-ood.yaml`, `sciplex3-ood.yaml`, ... |
+| **2: model templates** | `cellot/cellot_gpu/configs/models/*.yaml` | `model:`, `optim:`, `scheduler:`, `training:` (no task info) | `cellot.yaml`, `scgen.yaml`, `cae.yaml`, `identity.yaml`, `random.yaml` |
+| **3: merged config** | `cellot/cellot_gpu/results/<exp>/<model>/config.yaml` | Union of Layer 1 + Layer 2 + CLI overrides | The per-experiment `config.yaml` we walked through |
+
+**Upstream Bunne workflow**: `train.py --config configs/tasks/X.yaml --config configs/models/Y.yaml --config.data.target Z` → train.py composes Layer 1 + Layer 2 + overrides → writes Layer 3 to `outdir/config.yaml`.
+
+**Our workflow**: `generate_hvg_flavor_configs.py` writes Layer 3 *directly* as inline f-strings, skipping the multi-config composition. Layer 1 and Layer 2 files are not consulted at train time. This is what made the 13 archived `speciesot-*.yaml` Layer 1 files into fossils.
+
+**The hub's role**: cookbook v1 *collapses all three layers into one declarative spec*. The user authors one spec; the experiment factory materializes Layer 3 internally. `configs/tasks/` and `configs/models/` directories become internal templates of the factory (or disappear entirely), not user-facing files. For every new experiment, you author one spec — not "edit two templates and figure out which to compose."
+
 ## Hub v0 design — open questions resolution log
 
 | # | Question | Decision (date) |
@@ -238,7 +254,8 @@ As we walk each folder, every occurrence of stale labels gets flagged here for b
 - `662055e` — **Batch 5** (sbatch + root files + duplication diff + hub v0 design): sbatch/ walk; scripts/ vs speciesOT/scripts/ duplication resolved (recommendation captured); root files walked and bucketed; new `docs/hub_v0_design.md` written as first-pass hub v0 architecture.
 - `a10fe24` — **Batch 6** (eval-bug symmetric documentation): expand `docs/conceptual_framework.md` §5.5 to cover the mirror bug (scGen + latent_space silently being gene-space), articulate the universal rule (always pass `--embedding ae` except IMPACT_CellOT + latent_space), and capture the historical insight that our deliberate `impact_cellot` naming disabled the upstream `model-cellot` auto-detect — which is what surfaced the latent bug.
 - `ee048bd` — **Batch 7** (hub v0 open questions closed): revise discovery walker to NOT skip `_archive/` subtrees (per user's "include everything" preference); mark all 5 hub design questions resolved; add resolution log to scratchpad.
-- *no commit needed* — **cellot/ walk, Action A** (gitignored disk-only): delete `cellot/cellot_gpu/.ipynb_checkpoints/` and `cellot/cellot_gpu/cellot.egg-info/`. Pure junk, both regenerable. Disk-only since gitignored.
+- `334579a` — **Batch 8** (cellot/ walk start, Action A): backfill batch-5–7 commit log; disk-only delete of `cellot/cellot_gpu/.ipynb_checkpoints/` and `cellot/cellot_gpu/cellot.egg-info/`.
+- *no commit yet* — **cellot/ walk continued** (this turn): (a) disk-only delete of `cellot/_archive/cellot_cpu_clone/` (~2.4 GB freed; verified all differences from `cellot_gpu/` were pure GPU-device plumbing — see `cellot/data/cell.py`, `losses/mmd.py`, `models/{ae,cellot}.py`, `train/{train,utils}.py`, `transport.py`, `utils/{evaluate,loaders}.py`, `scripts/evaluate.py`; recovery: `git clone https://github.com/bunnech/cellot cellot/_archive/cellot_cpu_clone`). (b) `git mv` 13 stale `speciesot-*.yaml` files from `cellot/cellot_gpu/configs/tasks/` → `cellot/cellot_gpu/configs/tasks/_archive/speciesot_v1/`. These were speciesot_v1-era Layer 1 (task) templates for the upstream multi-config-composition workflow; superseded by our `scripts/generate_hvg_flavor_configs.py` which writes Layer 3 directly.
 
 ## Queue of moves/renames to apply in next batch
 
