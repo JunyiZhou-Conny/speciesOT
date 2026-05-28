@@ -178,6 +178,19 @@ git rm -r speciesOT/scripts/
 
 ---
 
+## Hub v0 design — open questions resolution log
+
+| # | Question | Decision (date) |
+|---|---|---|
+| 1 | Where does the hub package live? | `speciesOT/hub/` (inner Python package). 2026-05-27. |
+| 2 | How much detail in EvalRecord? | (Z) hybrid: full schema preserved + headline summary fields extracted for fast filtering. 2026-05-27. |
+| 3 | `project_phase` naming? | **Restructured**: drop `project_phase` as single string; replace with orthogonal structured fields (data_source, normalization, log1p_applied, hvg_method, hvg_input_layer, hvg_batch_key, framing, holdout_cell_types, holdout_species, train_includes_holdout, datasplit_strategy, plus lineage `generated_by`/`created_at`/`last_modified`). Auto-inferred from config + dataset filename. 2026-05-27. |
+| 3a | Model family naming? | 4 families, all visible in hub: `scgen`, `impact_cellot`, `cellot_celltype` (abandoned cell-type framing), `cellot_legacy` (legacy crossspecies). 2026-05-27. |
+| 4 | EvalRecord granularity? | One record per `evals_*/` subdir (not per ncells row). Compound key `(run_id, eval_id)` where `eval_id` is the subdir name. Full schema preserved per (Z). 2026-05-27. |
+| 5 | Include `speciesOT/baseline/results/` in scope? | Yes — frozen historical discovery root alongside `cellot/cellot_gpu/results/`. No new writes go there. **Also**: revised hub design to NOT skip `_archive/` subtrees, so the batch-3 archived toggle cellot subdirs remain discoverable per "include everything" preference. 2026-05-27. |
+
+---
+
 ## Cross-cutting workstream: model-framing naming convention
 
 Settled convention (from `presentation_preparation.ipynb`, most up-to-date notebook):

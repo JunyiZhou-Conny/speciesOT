@@ -106,25 +106,29 @@ class Catalog:
 
 ## 5. Discovery algorithm
 
+The hub discovers across **two roots**:
+1. `cellot/cellot_gpu/results/` — the main results tree (active + historical + archived).
+2. `speciesOT/baseline/results/` — the older speciesot_v1 holdings (locked-in 2026-05-27 per Junyi: "include everything in the Hubscope"). No new model writes happen here; the dir is essentially frozen historical.
+
 ```python
 def discover(roots: list[Path]) -> Iterator[Path]:
     """Find every model directory under the given roots."""
     for root in roots:
         for config_yaml in root.rglob("config.yaml"):
             model_dir = config_yaml.parent
-            # Skip _archive/ subtrees by convention
-            if "_archive" in model_dir.parts:
-                continue
-            # Skip the upstream library's own configs (cellot/cellot_gpu/configs/)
+            # Skip the upstream library's own task templates
             if "configs" in model_dir.parts and "cellot" in model_dir.parts:
                 continue
             yield model_dir
 ```
 
-That's the whole walker. A model dir is defined by "contains a `config.yaml`". This naturally excludes:
-- `_archive/` subtrees (our convention from batch 3).
-- The upstream library's `configs/tasks/*.yaml` (those aren't model dirs).
-- Stray legacy paths that happen to have a `config.yaml` but no cache — those get an `aborted` / `never_started` status from `readers.py`.
+A model dir is defined by "contains a `config.yaml`". The walker is intentionally **inclusive** — `_archive/` subtrees are discovered too. The reason: per Junyi's "include everything" preference (2026-05-27), the hub should surface every model that has been trained, even abandoned-framing models we moved to `_archive/` for disk-tidiness reasons. The archive directories signal "moved out of the way," not "hidden."
+
+What does get excluded:
+- The upstream library's `configs/tasks/*.yaml` (those are config templates for the upstream paper's experiments — not our trained models).
+- Stray legacy paths that have a `config.yaml` but no `cache/` — those get an `aborted` / `never_started` status from `readers.py` and still appear in the catalog with that status.
+
+**Records from archived dirs** carry the standard `family` field (e.g. `cellot_celltype` for the abandoned cell-type framing), so they're visible-but-distinguishable. The user can filter them out with `hub list --filter family!=cellot_celltype` if desired, but the default `hub list` shows them.
 
 ## 6. Alias resolution
 
@@ -250,7 +254,7 @@ These are things I'd want to know before starting v0 implementation:
 2. **Should `EvalRecord` include the upstream `evaluate.py` output columns verbatim** (so the hub captures the full evals.csv schema), or only the user-facing pivoted summary? My read: capture everything but display only key metrics by default. Storage is cheap.
 3. **Is there a particular naming convention you want for `project_phase`?** I used `legacy_crossspecies`, `speciesot_v1`, `toggle`, `renorm`, `hvg_flavor`, `atlas_full`, `bcg`. Will appear as a column / filter value, so worth getting right.
 4. **What about evaluation_id?** Two evals at different `n_cells` are different records. Should they share a `model.run_id` parent and have their own `eval_id`? I think yes — the 1:N relationship you flagged on 2026-05-27 fits this exactly.
-5. **Do you want to include `speciesOT/baseline/results/` in scope?** That's the older `speciesot_cd8/{cellot,impact_or}/evals_ood_data_space/imputed.h5ad` directory we flagged earlier. It belongs to the speciesot_v1 phase. Including it makes the hub the *complete* catalog; excluding it limits scope.
+5. ~~Do you want to include `speciesOT/baseline/results/` in scope?~~ **Resolved 2026-05-27**: yes, include everything; `speciesOT/baseline/results/` is a discovery root alongside `cellot/cellot_gpu/results/`. The dir is essentially frozen historical — no new writes go there; all future results land in `cellot/cellot_gpu/results/`.
 
 ## 12. What this doc is NOT
 
