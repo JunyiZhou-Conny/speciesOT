@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from speciesOT.hub.catalog import EvalRecord, ModelRecord
+from speciesOT.hub.figures import list_attached_figures
 
 
 # Where cards go by default.
@@ -77,8 +78,7 @@ def render_card(rec: ModelRecord) -> str:
         "unknown": "unknown",
     }.get(rec.family, rec.family)
 
-    figures_dir = rec.model_dir / "figures"
-    figure_files = sorted(figures_dir.glob("*")) if figures_dir.exists() else []
+    figure_files = list_attached_figures(rec.model_dir)
 
     parts: list[str] = []
     parts.append(f"# {title}\n")
@@ -149,16 +149,28 @@ def render_card(rec: ModelRecord) -> str:
     parts.append(f"| last_modified | {_fmt(rec.last_modified)} |")
     parts.append("")
 
-    # Diagnostic figures (v0.5 will populate)
+    # Diagnostic figures (populated by `./hub attach-figures` matcher)
     parts.append("## Diagnostic figures\n")
     if figure_files:
+        # Show PNG/JPG inline; link PDFs and SVGs (markdown can't inline them).
+        # Group by stem so a (png + pdf) pair displays as one entry with both links.
+        from collections import defaultdict
+        by_stem: dict[str, list[Path]] = defaultdict(list)
         for f in figure_files:
-            if f.suffix.lower() in {".png", ".jpg", ".jpeg", ".pdf", ".svg"}:
-                parts.append(f"### {f.stem}\n")
-                parts.append(f"![{f.stem}]({f.as_posix()})")
-                parts.append("")
+            by_stem[f.stem].append(f)
+        for stem, files in sorted(by_stem.items()):
+            parts.append(f"### {stem}\n")
+            # Pick the first PNG/JPG (if any) for inline display.
+            inline = next((f for f in files if f.suffix.lower() in {".png", ".jpg", ".jpeg"}), None)
+            if inline is not None:
+                parts.append(f"![{stem}]({inline.as_posix()})\n")
+            # Link any other formats (PDF, SVG, additional PNG).
+            other_links = [f for f in files if f != inline]
+            if other_links:
+                links = " · ".join(f"[`{f.suffix.lstrip('.')}`]({f.as_posix()})" for f in other_links)
+                parts.append(f"_also available as: {links}_\n")
     else:
-        parts.append("_None attached yet. v0.5 will populate this section via the figure-attachment matcher (see docs/hub_v0_design.md §10)._")
+        parts.append("_None attached. Run `./hub attach-figures` to scan baseline/analysis/*_outputs/ and link matching figures here._")
         parts.append("")
 
     # Evaluations

@@ -20,6 +20,7 @@ from typing import Any
 from pathlib import Path
 
 from speciesOT.hub.discover import build_catalog
+from speciesOT.hub.figures import apply_matches, match_all, summarize_matches
 from speciesOT.hub.render import DEFAULT_CARDS_DIR, write_card, write_index
 
 
@@ -254,6 +255,33 @@ def _card_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _attach_figures_command(args: argparse.Namespace) -> int:
+    catalog = build_catalog()
+    matches = match_all(catalog)
+
+    if args.dry_run:
+        print(summarize_matches(matches))
+        print()
+        print(f"[hub] dry-run: would create {len(matches)} symlinks. Re-run without --dry-run to apply.")
+        return 0
+
+    if args.summary:
+        print(summarize_matches(matches))
+        print()
+
+    stats = apply_matches(matches, overwrite=args.overwrite)
+    print(
+        f"[hub] attach-figures: created {stats['created']} symlinks, "
+        f"skipped {stats['skipped_existing']} existing, "
+        f"errors {stats['errors']}."
+    )
+    if not args.overwrite and stats["skipped_existing"] > 0:
+        print(
+            "[hub] hint: pass --overwrite to replace existing symlinks (e.g. after a figure update)."
+        )
+    return 0 if stats["errors"] == 0 else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="hub",
@@ -299,6 +327,30 @@ def main() -> int:
         help=f"output directory (default: {DEFAULT_CARDS_DIR})",
     )
     card_p.set_defaults(func=_card_command)
+
+    attach_p = sub.add_parser(
+        "attach-figures",
+        help=(
+            "scan speciesOT/baseline/analysis/*_outputs/ and symlink matching figures "
+            "into <model_dir>/figures/ so they appear on the model cards"
+        ),
+    )
+    attach_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show what would be linked without creating symlinks",
+    )
+    attach_p.add_argument(
+        "--summary",
+        action="store_true",
+        help="print the per-model match summary before applying",
+    )
+    attach_p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="overwrite existing symlinks (default: skip if target exists)",
+    )
+    attach_p.set_defaults(func=_attach_figures_command)
 
     args = parser.parse_args()
     return args.func(args)
