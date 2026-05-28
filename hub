@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Thin wrapper for `python -m speciesOT.hub.cli`.
+#
+# Usage from workspace root:
+#   ./hub list
+#   ./hub list --filter hvg_method=pearson_residuals
+#   ./hub show hvg_seurat_d_ood/impact_cellot
+#
+# The script ensures the CellOT conda env is active (it has yaml + pandas).
+# If your conda is at a different path, edit CONDA_INIT below.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+# Activate CellOT env if not already active.
+if [[ "${CONDA_DEFAULT_ENV:-}" != "CellOT" ]]; then
+    CONDA_INIT="/n/home01/jzhou1125/miniforge3/etc/profile.d/conda.sh"
+    if [[ -f "$CONDA_INIT" ]]; then
+        # shellcheck disable=SC1090
+        source "$CONDA_INIT"
+        conda activate CellOT 2>/dev/null || {
+            echo "[hub] could not activate CellOT env. Try: conda activate CellOT" >&2
+            exit 1
+        }
+    else
+        echo "[hub] CONDA_INIT not found at $CONDA_INIT" >&2
+        echo "[hub] activate CellOT manually first: conda activate CellOT" >&2
+        exit 1
+    fi
+fi
+
+exec python -m speciesOT.hub.cli "$@"
