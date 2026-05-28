@@ -336,6 +336,158 @@ def render_comparison(a: ModelRecord, b: ModelRecord) -> str:
     return "\n".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# Export (CSV / MD) — replaces scripts/build_experiments_inventory.py
+# ---------------------------------------------------------------------------
+
+# Columns for the flat CSV export. Order chosen so the most-useful fields appear first.
+_EXPORT_COLUMNS: list[str] = [
+    "run_id",
+    "family",
+    "family_alias_seen",
+    "status",
+    "data_source",
+    "normalization",
+    "hvg_method",
+    "hvg_input_layer",
+    "log1p_applied",
+    "hvg_batch_key",
+    "data_file",
+    "framing",
+    "condition",
+    "source",
+    "target",
+    "transport_direction",
+    "holdout_cell_types",
+    "holdout_species",
+    "train_includes_holdout",
+    "datasplit_strategy",
+    "model_name",
+    "hidden_units",
+    "latent_dim",
+    "n_iters",
+    "n_inner_iters",
+    "batch_size",
+    "lr",
+    "optimizer",
+    "ae_emb_path",
+    "generated_by",
+    "created_at",
+    "last_modified",
+    "model_dir",
+    "n_evals",
+    "evals_summary",
+]
+
+
+def _csv_value(v) -> str:
+    """Stringify a value for CSV. Lists become 'a;b;c' (semicolon-separated)."""
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "True" if v else "False"
+    if isinstance(v, list):
+        return ";".join(str(x) for x in v)
+    if isinstance(v, Path):
+        return str(v)
+    return str(v)
+
+
+def _evals_summary(rec: ModelRecord) -> str:
+    """One-line summary of evaluations for the CSV/MD export."""
+    if not rec.evals:
+        return ""
+    bits = []
+    for ev in rec.evals:
+        r2 = f"{ev.headline_r2_means:.3f}" if ev.headline_r2_means is not None else "—"
+        mmd = f"{ev.headline_mmd:.3f}" if ev.headline_mmd is not None else "—"
+        bits.append(f"{ev.eval_id}: R²={r2} MMD={mmd}")
+    return " | ".join(bits)
+
+
+def export_csv(records: list[ModelRecord], out_path: Path) -> Path:
+    """Write a flat CSV with one row per ModelRecord. Replaces experiments_inventory.csv."""
+    import csv
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_EXPORT_COLUMNS)
+        writer.writeheader()
+        for rec in sorted(records, key=lambda r: r.run_id):
+            row = {col: _csv_value(getattr(rec, col, None)) for col in _EXPORT_COLUMNS if col not in {"n_evals", "evals_summary"}}
+            row["n_evals"] = str(len(rec.evals))
+            row["evals_summary"] = _evals_summary(rec)
+            writer.writerow(row)
+    return out_path
+
+
+def export_md(records: list[ModelRecord], out_path: Path) -> Path:
+    """Write a human-readable markdown summary. Replaces experiments_inventory.md."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = [
+        "# experiments_inventory",
+        "",
+        f"Auto-generated from `./hub export md` ({len(records)} models).",
+        "",
+        "Same data as `experiments_inventory.csv`. Grouped by family for browsability.",
+        "",
+    ]
+
+    # Group by family.
+    by_family: dict[str, list[ModelRecord]] = {}
+    for r in sorted(records, key=lambda r: r.run_id):
+        by_family.setdefault(r.family, []).append(r)
+
+    family_labels = {
+        "scgen": "scGen",
+        "impact_cellot": "IMPACT_CellOT",
+        "cellot_celltype": "CellOT (cell-type framing, abandoned)",
+        "cellot_legacy": "CellOT (legacy crossspecies)",
+        "cellot_unresolved": "CellOT (unresolved)",
+        "unknown": "Unknown",
+    }
+    family_order = ["impact_cellot", "scgen", "cellot_celltype", "cellot_legacy", "cellot_unresolved", "unknown"]
+
+    for fam in family_order:
+        if fam not in by_family:
+            continue
+        members = by_family[fam]
+        lines.append(f"## {family_labels.get(fam, fam)} ({len(members)})")
+        lines.append("")
+        lines.append("| run_id | hvg | holdout | mode | R² | MMD | status |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for r in members:
+            hvg = r.hvg_method or "—"
+            if r.holdout_cell_types:
+                holdout = ", ".join(r.holdout_cell_types)
+            elif r.holdout_species:
+                holdout = f"species={r.holdout_species}"
+            else:
+                holdout = "—"
+            if r.train_includes_holdout is True:
+                mode = "iid"
+            elif r.train_includes_holdout is False:
+                mode = "ood"
+            else:
+                mode = "—"
+            # Headline metrics: prefer data_space
+            r2_str = "—"
+            mmd_str = "—"
+            if r.evals:
+                ds = [e for e in r.evals if e.space == "data_space"]
+                ev = (ds + r.evals)[0]
+                if ev.headline_r2_means is not None:
+                    r2_str = f"{ev.headline_r2_means:.3f}"
+                if ev.headline_mmd is not None:
+                    mmd_str = f"{ev.headline_mmd:.3f}"
+            lines.append(
+                f"| `{r.run_id}` | `{hvg}` | {holdout} | {mode} | {r2_str} | {mmd_str} | {r.status} |"
+            )
+        lines.append("")
+
+    out_path.write_text("\n".join(lines))
+    return out_path
+
+
 def write_index(records: list[ModelRecord], output_dir: Optional[Path] = None) -> Path:
     """Write a top-level INDEX.md linking to every card."""
     out_dir = output_dir or DEFAULT_CARDS_DIR

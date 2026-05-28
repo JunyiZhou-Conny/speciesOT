@@ -256,6 +256,14 @@ As we walk each folder, every occurrence of stale labels gets flagged here for b
 - `ee048bd` — **Batch 7** (hub v0 open questions closed): revise discovery walker to NOT skip `_archive/` subtrees (per user's "include everything" preference); mark all 5 hub design questions resolved; add resolution log to scratchpad.
 - `334579a` — **Batch 8** (cellot/ walk start, Action A): backfill batch-5–7 commit log; disk-only delete of `cellot/cellot_gpu/.ipynb_checkpoints/` and `cellot/cellot_gpu/cellot.egg-info/`.
 - `10c4a36` — **Batch 9** (cellot/ archive + YAML system docs): git mv 13 stale `speciesot-*.yaml` Layer-1 task templates → `cellot/cellot_gpu/configs/tasks/_archive/speciesot_v1/`; add three-layer YAML system section to scratchpad; add cookbook §12 to `docs/hub_v0_design.md`; also (disk-only) deleted `cellot/_archive/cellot_cpu_clone/` (~2.4 GB freed).
+- `d5d6c68` — **Batch 10** (speciesOT/ walk quick-wins): delete `speciesOT/{__pycache__/,.ipynb_checkpoints/,baseline/.ipynb_checkpoints/}` (~9.7 MB), `speciesOT/scripts/` (stale inner duplicate, 13 files), `speciesOT/HOW_TO_RUN_NEW_INPUT.{md,txt}` (duplicates of workspace-root files).
+- `181306e` — **Hub v0 SHIPPED**: model-card catalog working end-to-end. New `speciesOT/hub/` package (6 modules, ~600 LOC). 175 models discovered. Alias resolution working. R²-squaring baked in. `hub list` + `hub show`.
+- `9f0711a` — **Hub v0 polish**: add `./hub` wrapper (auto-activates CellOT env) + `docs/hub_usage.md`.
+- `1df2118` — **Hub v0.1**: markdown model cards (`./hub card <run_id>`, `./hub card --all` → 175 cards + INDEX.md grouped by family).
+- `321b910` — **Hub v0.1.1**: disambiguate run_ids across roots (`gpu/...` vs `baseline/...`); preserve short-form UX via suffix-matching in `by_run_id`.
+- `3c24dfc` — **Hub v0.5**: figure attachment matcher (`./hub attach-figures`). 116 (figure, model) pairs auto-linked from `presentation_figure_outputs/` to `<model_dir>/figures/` based on `(group, hvg, mode)` compatibility.
+- `653b63b` — **Hub v0.7**: `./hub compare A B` for side-by-side spec deltas + metric deltas.
+- `10c4a36` — **Batch 9** (cellot/ archive + YAML system docs): git mv 13 stale `speciesot-*.yaml` Layer-1 task templates → `cellot/cellot_gpu/configs/tasks/_archive/speciesot_v1/`; add three-layer YAML system section to scratchpad; add cookbook §12 to `docs/hub_v0_design.md`; also (disk-only) deleted `cellot/_archive/cellot_cpu_clone/` (~2.4 GB freed).
 
 ## Queue of moves/renames to apply in next batch
 

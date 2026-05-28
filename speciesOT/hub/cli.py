@@ -21,7 +21,14 @@ from pathlib import Path
 
 from speciesOT.hub.discover import build_catalog
 from speciesOT.hub.figures import apply_matches, match_all, summarize_matches
-from speciesOT.hub.render import DEFAULT_CARDS_DIR, render_comparison, write_card, write_index
+from speciesOT.hub.render import (
+    DEFAULT_CARDS_DIR,
+    export_csv,
+    export_md,
+    render_comparison,
+    write_card,
+    write_index,
+)
 
 
 def _format_value(v: Any) -> str:
@@ -255,6 +262,26 @@ def _card_command(args: argparse.Namespace) -> int:
     return 0
 
 
+WORKSPACE_ROOT = Path("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT")
+
+
+def _export_command(args: argparse.Namespace) -> int:
+    catalog = build_catalog()
+    fmt = args.format
+    if fmt == "csv":
+        out = args.out or (WORKSPACE_ROOT / "experiments_inventory.csv")
+        export_csv(catalog.records, out)
+        print(f"[hub] wrote {len(catalog)} rows to {out}")
+    elif fmt == "md":
+        out = args.out or (WORKSPACE_ROOT / "experiments_inventory.md")
+        export_md(catalog.records, out)
+        print(f"[hub] wrote markdown summary to {out}")
+    else:
+        print(f"[hub] unknown format: {fmt!r} (use csv or md)", file=sys.stderr)
+        return 2
+    return 0
+
+
 def _compare_command(args: argparse.Namespace) -> int:
     catalog = build_catalog()
 
@@ -394,6 +421,19 @@ def main() -> int:
         help="write the comparison markdown to this path (default: print to stdout)",
     )
     compare_p.set_defaults(func=_compare_command)
+
+    export_p = sub.add_parser(
+        "export",
+        help="export the full catalog to csv or md (replaces experiments_inventory.csv/.md)",
+    )
+    export_p.add_argument("format", choices=["csv", "md"], help="output format")
+    export_p.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="output path (default: experiments_inventory.{csv,md} at workspace root)",
+    )
+    export_p.set_defaults(func=_export_command)
 
     args = parser.parse_args()
     return args.func(args)

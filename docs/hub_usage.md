@@ -91,13 +91,57 @@ Output sections: identity, data provenance, framing, holdout, architecture, line
 
 ---
 
-## What v0 does NOT do (yet)
+## Markdown model cards (v0.1)
 
-- **Markdown model cards** (planned v0.1): a `hub card <run_id>` command that writes a self-contained `.md` file you can open in Cursor's preview pane, with images inlined.
-- **Diagnostic figure attachment** (planned v0.5): a convention that `<model_dir>/figures/*.png` are auto-attached to the model card, plus a one-time matcher that links existing figures from `baseline/analysis/*_outputs/` into their model dirs.
-- **Comparison** (planned v0.7): `hub compare <run_id_a> <run_id_b>` showing side-by-side spec deltas and metric deltas.
-- **Spec system / cookbook** (planned v1): `hub spec from <run_id>` to clone an existing model's spec, then `hub generate <spec>` to write configs + sbatches, then `hub submit <spec>` to launch with proper afterok deps.
-- **Export to CSV/MD** (small follow-up to v0): `hub export csv -o experiments_inventory.csv` would replace the existing inventory script.
+```bash
+./hub card <run_id>             # writes one card to docs/model_cards/
+./hub card --all                # writes 175 cards + an INDEX.md grouped by family
+```
+
+Open `docs/model_cards/INDEX.md` in Cursor's preview pane (Cmd-Shift-V) for a clickable browseable view. Each model card has full tables for data provenance, framing, holdout, architecture, lineage, plus inline diagnostic figures (see below) and per-eval R²/MMD with true (squared) values.
+
+## Diagnostic figure attachment (v0.5)
+
+```bash
+./hub attach-figures --dry-run  # preview what would be linked (no changes)
+./hub attach-figures            # create the symlinks (idempotent)
+./hub attach-figures --overwrite # replace existing symlinks
+```
+
+Scans `speciesOT/baseline/analysis/{presentation_figure_outputs,umap_learn_outputs,hvg_flavor_nb14_outputs/figures}/` for image files (PNG/PDF/SVG), matches each one to compatible models by `(group, hvg_method, mode)` extraction, and creates symlinks at `<model_dir>/figures/<figname>` so the cards pick them up.
+
+The matcher is conservative — only per-experiment-cell figures are attached. Matrix-wide figures (`method_gap_*`, `figure_F_*_OOD.png`, paper-figure replicas, BCG-domain figures) are not auto-attached.
+
+After running `attach-figures`, regenerate cards (`./hub card --all`) to see the figures inline in each card.
+
+## Comparison (v0.7)
+
+```bash
+./hub compare A B               # prints markdown to stdout
+./hub compare A B --out FILE    # writes to file
+```
+
+Side-by-side comparison of two models. Shows:
+- **Spec differences** (the "cause"): which preprocessing / architecture / training fields differ.
+- **Metric differences** (the "effect"): R²/MMD deltas per matched eval_id, with sign (`+` / `−`) showing whether B beat A.
+- **Identical fields**: collapsed at the bottom so the deltas are the focus.
+
+Example: `./hub compare hvg_pearson_residuals_m2_ood/impact_cellot hvg_seurat_v3_m2_ood/impact_cellot` immediately surfaces "only hvg_method differs; pearson is better in data_space (R² 0.93 vs 0.90) but seurat_v3 is better in latent_space (0.78 vs 0.71)".
+
+## Export to CSV/MD
+
+```bash
+./hub export csv                # writes experiments_inventory.csv at workspace root
+./hub export md                 # writes experiments_inventory.md at workspace root
+./hub export csv --out FILE     # custom path
+```
+
+Replaces the old `scripts/build_experiments_inventory.py` workflow. The exports include every ModelRecord field plus a one-line per-eval summary.
+
+## What's still planned
+
+- **Spec system / cookbook (v1)**: `hub spec from <run_id>` to clone an existing model's spec, then `hub generate <spec>` to write configs + sbatches, then `hub submit <spec>` to launch with proper afterok deps. This is the m2 → m1 workflow.
+- **Figure pack (v1.5)**: regenerate diagnostic UMAPs and biomarker scatters from scratch for newly-trained models, so v1-generated experiments get figures alongside their evals.
 
 ---
 
