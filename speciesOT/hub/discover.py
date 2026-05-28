@@ -33,28 +33,28 @@ from speciesOT.hub.resolve import (
 
 WORKSPACE_ROOT = Path("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT")
 
-DEFAULT_ROOTS: list[Path] = [
-    WORKSPACE_ROOT / "cellot" / "cellot_gpu" / "results",
-    WORKSPACE_ROOT / "speciesOT" / "baseline" / "results",
+# Each root has a short tag used as the first segment of run_id so that
+# identically-named experiments in two roots remain disambiguated.
+DEFAULT_ROOTS: list[tuple[str, Path]] = [
+    ("gpu", WORKSPACE_ROOT / "cellot" / "cellot_gpu" / "results"),
+    ("baseline", WORKSPACE_ROOT / "speciesOT" / "baseline" / "results"),
 ]
 
 
-def iter_model_dirs(roots: list[Path]) -> Iterator[Path]:
-    """Yield every model dir (= contains config.yaml) under the given roots.
+def iter_model_dirs(root: Path) -> Iterator[Path]:
+    """Yield every model dir (= contains config.yaml) under the given root.
 
     Excludes the upstream library's task templates under
     `cellot/cellot_gpu/configs/`, which also have config.yaml files but are
     templates rather than trained-model directories.
     """
-    for root in roots:
-        if not root.exists():
+    if not root.exists():
+        return
+    for config_yaml in root.rglob("config.yaml"):
+        model_dir = config_yaml.parent
+        if "configs" in model_dir.parts and "results" not in model_dir.parts:
             continue
-        for config_yaml in root.rglob("config.yaml"):
-            model_dir = config_yaml.parent
-            # Guard against accidentally walking into the upstream configs tree.
-            if "configs" in model_dir.parts and "results" not in model_dir.parts:
-                continue
-            yield model_dir
+        yield model_dir
 
 
 def discover_evals(model_dir: Path) -> list[EvalRecord]:
@@ -154,18 +154,24 @@ def _classify_data_source(
     return data_source, normalization, log1p_applied, hvg_method, hvg_input_layer
 
 
-def build_record(model_dir: Path, root: Path) -> Optional[ModelRecord]:
-    """Build a ModelRecord from a model dir. Returns None if config.yaml is missing/empty."""
+def build_record(model_dir: Path, root_tag: str, root: Path) -> Optional[ModelRecord]:
+    """Build a ModelRecord from a model dir. Returns None if config.yaml is missing/empty.
+
+    `root_tag` is a short label (e.g. "gpu", "baseline") used as the first
+    segment of run_id so identically-named experiments across roots stay disambiguated.
+    """
     config_path = model_dir / "config.yaml"
     config = read_config(config_path)
     if not config:
         return None
 
-    # run_id is relative to the root: e.g. "hvg_seurat_d_ood/impact_cellot"
+    # run_id format: "<root_tag>/<path-relative-to-root>"
+    # e.g. "gpu/hvg_seurat_d_ood/impact_cellot" or "baseline/speciesot_cd8/cellot"
     try:
-        run_id = str(model_dir.relative_to(root))
+        rel = str(model_dir.relative_to(root))
     except ValueError:
-        run_id = str(model_dir)
+        rel = str(model_dir)
+    run_id = f"{root_tag}/{rel}" if root_tag else rel
 
     subdir_name = model_dir.name
     parent_tag = model_dir.parent.name
@@ -278,20 +284,27 @@ def build_record(model_dir: Path, root: Path) -> Optional[ModelRecord]:
     )
 
 
-def build_catalog(roots: Optional[list[Path]] = None) -> Catalog:
-    """Walk the given roots (default: DEFAULT_ROOTS) and build a complete catalog."""
+def build_catalog(
+    roots: Optional[list[tuple[str, Path]]] = None,
+) -> Catalog:
+    """Walk the given (tag, root) pairs and build a complete catalog.
+
+    Default: DEFAULT_ROOTS — ("gpu", cellot/cellot_gpu/results), ("baseline", speciesOT/baseline/results).
+    """
     if roots is None:
         roots = DEFAULT_ROOTS
 
     records: list[ModelRecord] = []
-    for root in roots:
-        for model_dir in iter_model_dirs([root]):
-            rec = build_record(model_dir, root)
+    walk_root_paths: list[Path] = []
+    for root_tag, root in roots:
+        walk_root_paths.append(root)
+        for model_dir in iter_model_dirs(root):
+            rec = build_record(model_dir, root_tag, root)
             if rec is not None:
                 records.append(rec)
 
     return Catalog(
         records=records,
-        walk_roots=roots,
+        walk_roots=walk_root_paths,
         discovered_at=datetime.now(),
     )

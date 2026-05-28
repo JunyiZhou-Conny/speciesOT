@@ -142,11 +142,15 @@ def _list_command(args: argparse.Namespace) -> int:
 
 def _show_command(args: argparse.Namespace) -> int:
     catalog = build_catalog()
-    rec = catalog.by_run_id(args.run_id)
+    try:
+        rec = catalog.by_run_id(args.run_id)
+    except ValueError as e:
+        print(f"[hub] {e}", file=sys.stderr)
+        return 2
     if rec is None:
         print(f"[hub] no model with run_id={args.run_id!r}", file=sys.stderr)
         print(
-            "[hub] hint: run `hub list` to see available run_ids.",
+            "[hub] hint: run `./hub list` to see available run_ids.",
             file=sys.stderr,
         )
         return 1
@@ -237,7 +241,11 @@ def _card_command(args: argparse.Namespace) -> int:
         print("[hub] specify a run_id, or pass --all", file=sys.stderr)
         return 2
 
-    rec = catalog.by_run_id(args.run_id)
+    try:
+        rec = catalog.by_run_id(args.run_id)
+    except ValueError as e:
+        print(f"[hub] {e}", file=sys.stderr)
+        return 2
     if rec is None:
         print(f"[hub] no model with run_id={args.run_id!r}", file=sys.stderr)
         return 1

@@ -111,9 +111,30 @@ class Catalog:
     discovered_at: datetime
 
     def by_run_id(self, run_id: str) -> Optional[ModelRecord]:
+        """Find a record by run_id. Supports exact match or unique-suffix match.
+
+        Exact: by_run_id("gpu/hvg_seurat_d_ood/impact_cellot") matches that exact run_id.
+        Suffix: by_run_id("hvg_seurat_d_ood/impact_cellot") matches if exactly one
+        record's run_id ends with that string (case the user dropped the root tag).
+
+        Returns None if no match. If multiple records match the suffix, the
+        method raises ValueError listing all candidates so the caller can prompt
+        the user to disambiguate.
+        """
+        # Exact match first.
         for r in self.records:
             if r.run_id == run_id:
                 return r
+        # Suffix match (allowing the user to omit the root tag).
+        candidates = [r for r in self.records if r.run_id.endswith("/" + run_id)]
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            ids = ", ".join(r.run_id for r in candidates)
+            raise ValueError(
+                f"ambiguous run_id {run_id!r}; matches: {ids}. "
+                "Use the full prefixed form."
+            )
         return None
 
     def filter(self, **kw) -> "Catalog":
