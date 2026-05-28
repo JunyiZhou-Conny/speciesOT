@@ -138,10 +138,85 @@ Example: `./hub compare hvg_pearson_residuals_m2_ood/impact_cellot hvg_seurat_v3
 
 Replaces the old `scripts/build_experiments_inventory.py` workflow. The exports include every ModelRecord field plus a one-line per-eval summary.
 
+## Spec system (v1) — the cookbook
+
+The hub can clone an existing model's setup, modify a few fields, and emit all the configs + sbatches needed to train + evaluate a new experiment cell.
+
+### The m2 → m1 workflow (worked example)
+
+```bash
+# 1. Dump the existing m2 setup as a YAML spec
+./hub spec dump hvg_pearson_residuals_m2_ood/impact_cellot --out specs/m2_baseline.yaml
+
+# 2. Copy + edit for m1: change experiment_tag, data_file, holdout_cell_types
+cp specs/m2_baseline.yaml specs/m1_modern.yaml
+# (manually edit: experiment_tag=hvg_pearson_residuals_m1_ood,
+#                 data_file=...hvg_pearson_residuals_m1_v07.h5ad,
+#                 holdout_cell_types=[CL:0000875])
+
+# 3. Dry-run preview before writing anything
+./hub generate specs/m1_modern.yaml --dry-run
+
+# 4. Materialize — writes 8 files (2 configs + 4 train/eval sbatches + 2 data-space eval sbatches)
+#    plus the model-scgen symlink. Prints the recommended sbatch chain.
+./hub generate specs/m1_modern.yaml
+
+# 5. Copy-paste the emitted sbatch chain to submit (with afterok deps automatically wired).
+#    The hub doesn't run sbatch itself — that's left manual on purpose.
+```
+
+### Spec file structure
+
+```yaml
+experiment_tag: hvg_pearson_residuals_m1_ood
+derived_from: gpu/hvg_pearson_residuals_m2_ood/impact_cellot  # lineage; informational
+data_source: speciesot-human-mouse-hvg
+data_file: datasets/speciesot-human-mouse-hvg/hvg_pearson_residuals_m1_v07.h5ad
+hvg_method: pearson_residuals
+hvg_input_layer: layers['counts']
+log1p_applied: false
+hvg_batch_key: species
+condition_column: condition
+source: mouse
+target: human
+holdout_cell_types: [CL:0000875]
+datasplit_strategy: toggle_ood
+mode: ood
+scgen_hidden_units: [256, 256]
+scgen_latent_dim: 50
+scgen_lr: 0.001
+# ... (full list in speciesOT/hub/spec.py:ExperimentSpec)
+```
+
+All fields except `experiment_tag` and `data_file` have defaults matching the existing matrix conventions. Override only what's different.
+
+### What `./hub generate` writes
+
+For a spec with tag `<tag>`:
+
+| Path | Purpose |
+|---|---|
+| `cellot/cellot_gpu/results/<tag>/scgen/config.yaml` | scGen training config |
+| `cellot/cellot_gpu/results/<tag>/impact_cellot/config.yaml` | IMPACT_CellOT training config |
+| `cellot/cellot_gpu/results/<tag>/model-scgen` (symlink → `scgen`) | The contract that lets IMPACT_CellOT find its AE sibling |
+| `sbatch/train/train_<tag>_scgen.sbatch` | scGen training job |
+| `sbatch/train/train_<tag>_impact_cellot.sbatch` | IMPACT_CellOT training (requires scGen done first) |
+| `sbatch/eval/eval_<tag>_scgen.sbatch` | scGen latent-space eval (with `--embedding ae`) |
+| `sbatch/eval/eval_<tag>_impact_cellot.sbatch` | IMPACT_CellOT latent-space eval (no `--embedding ae` per §5.5) |
+| `sbatch/eval_dataspace/eval_<tag>_scgen_dataspace.sbatch` | scGen data-space eval |
+| `sbatch/eval_dataspace/eval_<tag>_impact_cellot_dataspace.sbatch` | IMPACT_CellOT data-space eval — **always passes `--embedding ae`** to avoid the latent-space silent bug |
+
+Existing files are skipped by default. Pass `--force` to overwrite.
+
+### Why the hub doesn't auto-submit
+
+The hub deliberately stops at file-writing. Actually running `sbatch` is left manual. The `generate` command prints the recommended chain so you can copy-paste, but you decide when to launch.
+
 ## What's still planned
 
-- **Spec system / cookbook (v1)**: `hub spec from <run_id>` to clone an existing model's spec, then `hub generate <spec>` to write configs + sbatches, then `hub submit <spec>` to launch with proper afterok deps. This is the m2 → m1 workflow.
 - **Figure pack (v1.5)**: regenerate diagnostic UMAPs and biomarker scatters from scratch for newly-trained models, so v1-generated experiments get figures alongside their evals.
+- **`hub spec from --set field=value`**: in-place spec creation without needing to manually edit YAML.
+- **Multi-cell spec batches**: generate an entire matrix dimension (e.g. all 4 m1–m4 monocyte cells × 2 modes) from one parent spec + a sweep field.
 
 ---
 

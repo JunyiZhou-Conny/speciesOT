@@ -1,0 +1,38 @@
+experiment_tag: hvg_pearson_residuals_m1_ood
+derived_from: gpu/hvg_pearson_residuals_m1_ood/impact_cellot
+data_source: speciesot-human-mouse-hvg
+data_file: datasets/speciesot-human-mouse-hvg/hvg_pearson_residuals_m1_v07.h5ad
+hvg_method: pearson_residuals
+hvg_input_layer: layers['counts']
+log1p_applied: false
+hvg_batch_key: species
+condition_column: condition
+source: mouse
+target: human
+holdout_cell_types:
+- CL:0000875
+holdout_species: null
+datasplit_strategy: toggle_ood
+mode: ood
+test_size: 0.2
+random_state: 0
+scgen_hidden_units:
+- 256
+- 256
+scgen_latent_dim: 50
+scgen_lr: 0.001
+scgen_batch_size: 256
+scgen_n_iters: 50000
+impact_hidden_units:
+- 64
+- 64
+- 64
+- 64
+impact_latent_dim: 50
+impact_lr: 0.0001
+impact_batch_size: 128
+impact_n_iters: 50000
+impact_n_inner_iters: 10
+data_space_n_cells: 30,50,80
+notes: Modern preprocessing version of toggle_m1_ood, cloned from m2 setup. Holdout
+  reduced from [CL:0000875, CL:0000576] to [CL:0000875] (non-classical monocyte only).

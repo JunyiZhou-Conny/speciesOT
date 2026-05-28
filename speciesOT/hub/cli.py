@@ -29,6 +29,14 @@ from speciesOT.hub.render import (
     write_card,
     write_index,
 )
+from speciesOT.hub.spec import (
+    ExperimentSpec,
+    generate_artifacts,
+    load_spec_yaml,
+    render_submission_chain,
+    spec_from_record,
+    write_spec_yaml,
+)
 
 
 def _format_value(v: Any) -> str:
@@ -265,6 +273,61 @@ def _card_command(args: argparse.Namespace) -> int:
 WORKSPACE_ROOT = Path("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT")
 
 
+def _spec_dump_command(args: argparse.Namespace) -> int:
+    catalog = build_catalog()
+    try:
+        rec = catalog.by_run_id(args.run_id)
+    except ValueError as e:
+        print(f"[hub] {e}", file=sys.stderr)
+        return 2
+    if rec is None:
+        print(f"[hub] no model with run_id={args.run_id!r}", file=sys.stderr)
+        return 1
+    spec = spec_from_record(rec)
+    if args.out:
+        write_spec_yaml(spec, args.out)
+        print(f"[hub] wrote spec: {args.out}")
+    else:
+        import yaml as _yaml
+        from dataclasses import asdict
+        print(_yaml.safe_dump(asdict(spec), default_flow_style=False, sort_keys=False))
+    return 0
+
+
+def _generate_command(args: argparse.Namespace) -> int:
+    spec = load_spec_yaml(args.spec)
+    plan = generate_artifacts(spec, dry_run=args.dry_run, force=args.force)
+
+    verb = "would write" if args.dry_run else "wrote"
+    print(f"[hub] generate spec={args.spec.name} tag={spec.experiment_tag}")
+    print(f"[hub] {verb} {len(plan.written)} files:")
+    for p in plan.written:
+        try:
+            rel = p.relative_to(WORKSPACE_ROOT)
+        except ValueError:
+            rel = p
+        print(f"    {rel}")
+    for link, target in plan.symlinks:
+        try:
+            rel = link.relative_to(WORKSPACE_ROOT)
+        except ValueError:
+            rel = link
+        print(f"    {rel} -> {target}  (symlink)")
+    if plan.skipped:
+        print(f"[hub] skipped {len(plan.skipped)} (use --force to overwrite):")
+        for p, reason in plan.skipped:
+            try:
+                rel = p.relative_to(WORKSPACE_ROOT)
+            except ValueError:
+                rel = p
+            print(f"    {rel}  ({reason})")
+
+    if not args.dry_run:
+        print()
+        print(render_submission_chain(spec))
+    return 0
+
+
 def _export_command(args: argparse.Namespace) -> int:
     catalog = build_catalog()
     fmt = args.format
@@ -434,6 +497,40 @@ def main() -> int:
         help="output path (default: experiments_inventory.{csv,md} at workspace root)",
     )
     export_p.set_defaults(func=_export_command)
+
+    spec_p = sub.add_parser(
+        "spec",
+        help="dump an existing model's spec as YAML (v1; spec system in progress)",
+    )
+    spec_sub = spec_p.add_subparsers(dest="spec_cmd", required=True)
+    spec_dump_p = spec_sub.add_parser(
+        "dump", help="dump a model's reverse-engineered spec to YAML"
+    )
+    spec_dump_p.add_argument("run_id", help="run_id of the model to dump from")
+    spec_dump_p.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="output YAML path (default: print to stdout)",
+    )
+    spec_dump_p.set_defaults(func=_spec_dump_command)
+
+    generate_p = sub.add_parser(
+        "generate",
+        help="materialize configs + sbatches from a spec YAML",
+    )
+    generate_p.add_argument("spec", type=Path, help="path to a spec YAML")
+    generate_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show what would be written without creating files",
+    )
+    generate_p.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite existing configs and sbatches (default: skip)",
+    )
+    generate_p.set_defaults(func=_generate_command)
 
     args = parser.parse_args()
     return args.func(args)
