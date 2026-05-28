@@ -21,7 +21,7 @@ from pathlib import Path
 
 from speciesOT.hub.discover import build_catalog
 from speciesOT.hub.figures import apply_matches, match_all, summarize_matches
-from speciesOT.hub.render import DEFAULT_CARDS_DIR, write_card, write_index
+from speciesOT.hub.render import DEFAULT_CARDS_DIR, render_comparison, write_card, write_index
 
 
 def _format_value(v: Any) -> str:
@@ -255,6 +255,35 @@ def _card_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _compare_command(args: argparse.Namespace) -> int:
+    catalog = build_catalog()
+
+    def _resolve(rid: str):
+        try:
+            return catalog.by_run_id(rid)
+        except ValueError as e:
+            print(f"[hub] {e}", file=sys.stderr)
+            return None
+
+    rec_a = _resolve(args.run_id_a)
+    rec_b = _resolve(args.run_id_b)
+    if rec_a is None or rec_b is None:
+        if rec_a is None:
+            print(f"[hub] no model with run_id={args.run_id_a!r}", file=sys.stderr)
+        if rec_b is None:
+            print(f"[hub] no model with run_id={args.run_id_b!r}", file=sys.stderr)
+        return 1
+
+    md = render_comparison(rec_a, rec_b)
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(md)
+        print(f"[hub] wrote comparison: {args.out}")
+    else:
+        print(md)
+    return 0
+
+
 def _attach_figures_command(args: argparse.Namespace) -> int:
     catalog = build_catalog()
     matches = match_all(catalog)
@@ -351,6 +380,20 @@ def main() -> int:
         help="overwrite existing symlinks (default: skip if target exists)",
     )
     attach_p.set_defaults(func=_attach_figures_command)
+
+    compare_p = sub.add_parser(
+        "compare",
+        help="side-by-side comparison of two model cards (spec deltas + metric deltas)",
+    )
+    compare_p.add_argument("run_id_a", help="first run_id")
+    compare_p.add_argument("run_id_b", help="second run_id")
+    compare_p.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="write the comparison markdown to this path (default: print to stdout)",
+    )
+    compare_p.set_defaults(func=_compare_command)
 
     args = parser.parse_args()
     return args.func(args)
