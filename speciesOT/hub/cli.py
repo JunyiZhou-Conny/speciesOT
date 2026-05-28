@@ -17,7 +17,10 @@ import argparse
 import sys
 from typing import Any
 
+from pathlib import Path
+
 from speciesOT.hub.discover import build_catalog
+from speciesOT.hub.render import DEFAULT_CARDS_DIR, write_card, write_index
 
 
 def _format_value(v: Any) -> str:
@@ -62,15 +65,20 @@ def _list_command(args: argparse.Namespace) -> int:
             filters[k] = _coerce_filter_value(raw_v)
         catalog = catalog.filter(**filters)
 
-    # Sort
+    # Sort. Always secondary-sort by run_id for stable output within each group.
     if args.sort:
         def keyfn(r):
             v = getattr(r, args.sort, None)
+            # (is_none_flag, primary_value, run_id). is_none_flag pushes None values to the end.
             if v is None:
-                return (1, 0)  # sort None last
-            return (0, v)
+                return (1, "", r.run_id)
+            # Coerce non-comparable types to string so e.g. mixed-type fields don't blow up.
+            return (0, v if isinstance(v, (str, int, float, bool)) else str(v), r.run_id)
 
         catalog.records.sort(key=keyfn, reverse=args.desc)
+    else:
+        # Default order: stable alphabetical by run_id.
+        catalog.records.sort(key=lambda r: r.run_id)
 
     if not catalog.records:
         print("[hub] no models found.")
@@ -202,6 +210,42 @@ def _show_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _card_command(args: argparse.Namespace) -> int:
+    catalog = build_catalog()
+
+    if args.all:
+        if args.run_id:
+            print(
+                "[hub] --all is mutually exclusive with a run_id argument",
+                file=sys.stderr,
+            )
+            return 2
+        out_dir = args.out_dir or DEFAULT_CARDS_DIR
+        n_cards = 0
+        for rec in catalog.records:
+            try:
+                write_card(rec, out_dir)
+                n_cards += 1
+            except OSError as e:
+                print(f"[hub] could not write card for {rec.run_id}: {e}", file=sys.stderr)
+        index_path = write_index(catalog.records, out_dir)
+        print(f"[hub] wrote {n_cards} cards + INDEX.md to {out_dir}")
+        print(f"[hub] open the index: {index_path}")
+        return 0
+
+    if not args.run_id:
+        print("[hub] specify a run_id, or pass --all", file=sys.stderr)
+        return 2
+
+    rec = catalog.by_run_id(args.run_id)
+    if rec is None:
+        print(f"[hub] no model with run_id={args.run_id!r}", file=sys.stderr)
+        return 1
+    out_path = write_card(rec, args.out_dir)
+    print(f"[hub] wrote card: {out_path}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="hub",
@@ -225,6 +269,28 @@ def main() -> int:
         help="run_id, e.g. hvg_seurat_d_ood/impact_cellot",
     )
     show_p.set_defaults(func=_show_command)
+
+    card_p = sub.add_parser(
+        "card",
+        help="render a markdown model card (openable in Cursor preview)",
+    )
+    card_p.add_argument(
+        "run_id",
+        nargs="?",
+        help="run_id to render; omit and pass --all to render every model",
+    )
+    card_p.add_argument(
+        "--all",
+        action="store_true",
+        help="render a card for every model + an INDEX.md grouping by family",
+    )
+    card_p.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help=f"output directory (default: {DEFAULT_CARDS_DIR})",
+    )
+    card_p.set_defaults(func=_card_command)
 
     args = parser.parse_args()
     return args.func(args)
