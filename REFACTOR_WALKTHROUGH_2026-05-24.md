@@ -255,12 +255,12 @@ As we walk each folder, every occurrence of stale labels gets flagged here for b
 - `a10fe24` — **Batch 6** (eval-bug symmetric documentation): expand `docs/conceptual_framework.md` §5.5 to cover the mirror bug (scGen + latent_space silently being gene-space), articulate the universal rule (always pass `--embedding ae` except IMPACT_CellOT + latent_space), and capture the historical insight that our deliberate `impact_cellot` naming disabled the upstream `model-cellot` auto-detect — which is what surfaced the latent bug.
 - `ee048bd` — **Batch 7** (hub v0 open questions closed): revise discovery walker to NOT skip `_archive/` subtrees (per user's "include everything" preference); mark all 5 hub design questions resolved; add resolution log to scratchpad.
 - `334579a` — **Batch 8** (cellot/ walk start, Action A): backfill batch-5–7 commit log; disk-only delete of `cellot/cellot_gpu/.ipynb_checkpoints/` and `cellot/cellot_gpu/cellot.egg-info/`.
-- *no commit yet* — **cellot/ walk continued** (this turn): (a) disk-only delete of `cellot/_archive/cellot_cpu_clone/` (~2.4 GB freed; verified all differences from `cellot_gpu/` were pure GPU-device plumbing — see `cellot/data/cell.py`, `losses/mmd.py`, `models/{ae,cellot}.py`, `train/{train,utils}.py`, `transport.py`, `utils/{evaluate,loaders}.py`, `scripts/evaluate.py`; recovery: `git clone https://github.com/bunnech/cellot cellot/_archive/cellot_cpu_clone`). (b) `git mv` 13 stale `speciesot-*.yaml` files from `cellot/cellot_gpu/configs/tasks/` → `cellot/cellot_gpu/configs/tasks/_archive/speciesot_v1/`. These were speciesot_v1-era Layer 1 (task) templates for the upstream multi-config-composition workflow; superseded by our `scripts/generate_hvg_flavor_configs.py` which writes Layer 3 directly.
+- `10c4a36` — **Batch 9** (cellot/ archive + YAML system docs): git mv 13 stale `speciesot-*.yaml` Layer-1 task templates → `cellot/cellot_gpu/configs/tasks/_archive/speciesot_v1/`; add three-layer YAML system section to scratchpad; add cookbook §12 to `docs/hub_v0_design.md`; also (disk-only) deleted `cellot/_archive/cellot_cpu_clone/` (~2.4 GB freed).
 
 ## Queue of moves/renames to apply in next batch
 
 User-confirmation required before executing any of these:
-- [ ] `git rm -r speciesOT/scripts/` (delete the stale inner copy; 12 files + 1 README).
+- [x] ~~`git rm -r speciesOT/scripts/` (delete the stale inner copy; 12 files + 1 README).~~ Done in batch 10.
 - [ ] `git mv REFACTOR_PLAN_2026-05-05.md docs/refactor_plan_2026-05-05.md` (archive original plan under docs/).
-- [ ] `git rm HOW_TO_RUN_NEW_INPUT.txt` (keep the `.md`; regenerable via pandoc if mentor needs text).
+- [x] ~~`git rm HOW_TO_RUN_NEW_INPUT.txt` (keep the `.md`; regenerable via pandoc if mentor needs text).~~ Done in batch 10 *plus* the duplicate inside `speciesOT/` (both `.md` and `.txt`) — workspace-root copies remain canonical.
 - [ ] Update workspace-root `README.md` to mention `docs/conceptual_framework.md`, `docs/hub_v0_design.md`, `REFACTOR_WALKTHROUGH_2026-05-24.md`, and clarify "scripts/ at workspace root is the single source of truth."
