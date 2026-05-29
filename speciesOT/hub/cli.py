@@ -274,6 +274,31 @@ def _card_command(args: argparse.Namespace) -> int:
 WORKSPACE_ROOT = Path("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT")
 
 
+def _prep_command(args: argparse.Namespace) -> int:
+    """Placeholder for v2 — not yet implemented.
+
+    The intent is documented in docs/hub_design.md §14 and docs/hub_handoff.md §4.
+    Implementing this is the highest-priority next milestone.
+    """
+    print(
+        f"[hub] ./hub prep is NOT YET IMPLEMENTED (planned for v2).",
+        file=sys.stderr,
+    )
+    print(
+        f"[hub] requested spec: {args.spec}",
+        file=sys.stderr,
+    )
+    print(
+        f"[hub] for now, data prep is a notebook task — see speciesOT/baseline/analysis/01.5_data_prep_all_holdouts_hvg_flavors.ipynb",
+        file=sys.stderr,
+    )
+    print(
+        f"[hub] design + implementation notes: docs/hub_design.md §14 and docs/hub_handoff.md §4",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def _spec_dump_command(args: argparse.Namespace) -> int:
     catalog = build_catalog()
     try:
@@ -538,6 +563,13 @@ def main() -> int:
         help="overwrite existing configs and sbatches (default: skip)",
     )
     generate_p.set_defaults(func=_generate_command)
+
+    prep_p = sub.add_parser(
+        "prep",
+        help="materialize the .h5ad data file from a spec (v2 — NOT YET IMPLEMENTED)",
+    )
+    prep_p.add_argument("spec", type=Path, help="path to a spec YAML")
+    prep_p.set_defaults(func=_prep_command)
 
     args = parser.parse_args()
     return args.func(args)

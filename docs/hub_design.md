@@ -337,7 +337,31 @@ Suppose you want to add a new preprocessing variable — call it `quality_score_
 
 These are all "real changes" rather than "feature flags." They're rare. Most new variables fall into the easy "Pure metadata" class above.
 
-## 14. What this doc is NOT
+## 14. v2 — `./hub prep <spec.yaml>` (the next milestone)
+
+This is the highest-priority next thing to build. Junyi asked for it explicitly 2026-05-29: notebook-based data prep takes "forever," even the first chunk, and the hub should absorb the work.
+
+Full spec in `docs/hub_handoff.md` §4. Summary:
+
+- Reads the preprocessing-intent fields already in `ExperimentSpec` (`source_datasets`, `assay_filter`, `cap_cells_per_type`, `ortholog_source`, `hvg_*`, `holdout_*`).
+- Materializes the `.h5ad` at `cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/hvg_<flavor>_<group>_v07.h5ad`.
+- Implements the same procedure as notebook 01.5 §2–§6: load source files → promote .raw to .X → ortholog match → match cells by (cell_type, tissue) → filter holdout → HVG select → normalize+log1p → drop layers → save.
+- Two implementation gotchas: scanpy version (need `analysis` env, not `CellOT`) and BioMart ortholog caching (use `scripts/.biomart_ortholog_cache.csv` if present).
+
+Once shipped, the user's flow becomes:
+
+```bash
+# Edit a spec, then:
+./hub prep specs/<spec>.yaml         # v2 — NEW
+./hub generate specs/<spec>.yaml     # v1
+# copy-paste sbatch chain
+# wait
+./hub list / show / compare
+```
+
+That's the unified experiment-creation flow we've been building toward.
+
+## 15. What this doc is NOT
 
 - Not a green-light for implementation. It's a design proposal. The user reviews, picks apart, and either approves or rewrites before any code lands.
 - Not a commitment to the exact CLI / data model. These are *first proposals* — iterate freely.
