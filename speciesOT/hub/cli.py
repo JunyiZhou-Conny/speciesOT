@@ -31,6 +31,7 @@ from speciesOT.hub.render import (
 )
 from speciesOT.hub.spec import (
     ExperimentSpec,
+    find_cell_sibling,
     generate_artifacts,
     load_spec_yaml,
     render_submission_chain,
@@ -283,7 +284,13 @@ def _spec_dump_command(args: argparse.Namespace) -> int:
     if rec is None:
         print(f"[hub] no model with run_id={args.run_id!r}", file=sys.stderr)
         return 1
-    spec = spec_from_record(rec)
+    # If a sibling (scgen↔impact_cellot) exists in the same experiment dir, use its
+    # actual hyperparameters for the sibling slot. Makes the dump→generate round-trip
+    # lossless instead of defaulting the sibling.
+    sibling = find_cell_sibling(rec, catalog.records)
+    spec = spec_from_record(rec, sibling=sibling)
+    if sibling is not None:
+        print(f"[hub] including sibling {sibling.family} from {sibling.run_id} for round-trip fidelity", file=sys.stderr)
     if args.out:
         write_spec_yaml(spec, args.out)
         print(f"[hub] wrote spec: {args.out}")

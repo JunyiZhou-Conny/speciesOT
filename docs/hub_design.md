@@ -283,7 +283,61 @@ This means:
 - The hub catalog (v0) discovers the Layer 3 files that already exist on disk. The hub generator (v1) writes new Layer 3 files from specs. Both pieces share the same understanding of the merged-config shape (the `ModelRecord` dataclass).
 - The upstream Layer 1 task templates (`4i.yaml`, `sciplex3-*.yaml`, etc.) and the `crossspecies*.yaml` ones can stay in `configs/tasks/` as inert reference material; they're not part of the cookbook's path.
 
-## 13. What this doc is NOT
+## 13. Extensibility — how to add a new feature
+
+A core design principle of the hub (named explicitly by Junyi 2026-05-29):
+
+> **The hub doesn't need to be perfect — it needs to be extensible.** When a new preprocessing knob, model variant, or evaluation flag appears, the hub should be able to absorb it without major surgery. Add a field, update the renderer that consumes it, ship. Existing specs and existing cards continue to work via defaults; new specs opt into the new behavior.
+
+### Why this principle matters
+
+The project is research code; the experimental design changes regularly. The hub's value is in being a *centralized control panel*, not in being a frozen schema. Examples of features that emerged after the initial design:
+
+- **Assay filtering** (mouse → chromium_v2, human → chromium_v3) — not in the initial spec; added in the 2026-05-29 round.
+- **Cell-count capping per cell type** (1000-cap vs uncapped) — the user is actively investigating in `19_uncapped_cd8_ood_data_prep.ipynb`. Spec now records `cap_cells_per_type` so the choice is captured per model.
+- The bug we discovered about `--embedding ae`: the spec system's eval-sbatch renderer now *always* emits the correct flag, so future models can't reproduce the bug.
+
+If we'd designed the hub to be closed/strict, every new variable would require a redesign. The current shape lets new variables slot in incrementally.
+
+### The mechanical recipe (~10 minutes per feature)
+
+Suppose you want to add a new preprocessing variable — call it `quality_score_threshold` (a float that the data-prep step uses to filter cells).
+
+1. **Add the field to `ExperimentSpec`** (`speciesOT/hub/spec.py`):
+   ```python
+   quality_score_threshold: float = 0.5  # default = current pipeline value
+   ```
+   That's it for the dataclass — existing specs (without the field) will load and get the default.
+
+2. **Add the field to the `key_order` list in `write_spec_yaml`** so it appears in a sensible place in the YAML output. Optional but improves readability.
+
+3. **If the field needs to be auto-detected from existing models, add extraction logic to `discover.py`'s `_classify_data_source()`**. Optional — if the field isn't recoverable from disk (because past models predate it), it just defaults.
+
+4. **If the field affects what `./hub generate` writes, update the relevant renderer in `spec.py`**. For data-prep-intent fields like `assay_filter` that don't yet affect generation, this step is skipped — the field is recorded as metadata only.
+
+5. **Done**. The new field shows up:
+   - In `./hub spec dump` output
+   - In every model card under the appropriate section (because `render.py` walks all fields)
+   - In `./hub export csv` (because `_EXPORT_COLUMNS` reads them; add the new field name there if you want it as a column)
+   - In `./hub compare` if it differs between two models (because `_SPEC_FIELDS` enumerates the comparison set; add the field there if you want it called out)
+
+### Three classes of feature, in increasing scope
+
+| Class | Examples | What you do |
+|---|---|---|
+| **Pure metadata** (intent only) | `assay_filter`, `cap_cells_per_type`, `ortholog_source`, `quality_score_threshold` | Add field with default; that's it. Card + export + compare all surface it automatically. |
+| **Affects training/eval generation** | A new HVG flavor; a new model architecture variant; a different optimizer choice | Add field; update the relevant renderer in `spec.py` (e.g., `render_scgen_config` or a new `render_<model>_config`). |
+| **New data-prep step** | A new normalization, a new ortholog source, a new sampling strategy | Eventually requires `hub prep <spec>` (v2 milestone) to materialize the .h5ad from the spec. For now, the field is metadata only; the user runs the data-prep notebook by hand using the spec as a checklist. |
+
+### What the hub deliberately does NOT make extensible
+
+- **The four model families** (`scgen`, `impact_cellot`, `cellot_celltype`, `cellot_legacy`) are fixed in `resolve.py:_ALIAS_TO_FAMILY`. Adding a fifth family is a real design change (affects alias resolution, card rendering, comparison logic) — not just a field add.
+- **The two discovery roots** (`gpu/...`, `baseline/...`) are fixed in `discover.py:DEFAULT_ROOTS`. Adding a third root is mechanical but should be a conscious decision.
+- **The two-model cell shape** (`scgen + impact_cellot` per cell) is baked into `generate_artifacts()`. Future cells with different model combos (e.g. just scgen, or scgen+impact_cellot+cae) would need spec changes + renderer changes.
+
+These are all "real changes" rather than "feature flags." They're rare. Most new variables fall into the easy "Pure metadata" class above.
+
+## 14. What this doc is NOT
 
 - Not a green-light for implementation. It's a design proposal. The user reviews, picks apart, and either approves or rewrites before any code lands.
 - Not a commitment to the exact CLI / data model. These are *first proposals* — iterate freely.

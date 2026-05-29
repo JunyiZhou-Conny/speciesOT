@@ -64,15 +64,49 @@ class ExperimentSpec:
     experiment_tag: str                   # e.g. "hvg_pearson_residuals_m1_ood"
     derived_from: Optional[str] = None    # parent run_id if cloned
 
-    # Data
+    # === Data inputs and provenance ===
+    # data_source: the dataset family name (e.g. speciesot-human-mouse-hvg).
+    # data_file: relative path under cellot/cellot_gpu/ — the .h5ad the training
+    # script actually loads. The remaining fields below document HOW that file
+    # was produced from raw inputs. The hub's v1 generator does not currently
+    # materialize the file; it records the intent so future-you (or a future
+    # `hub prep` milestone) can rebuild the file from the spec.
     data_source: str = "speciesot-human-mouse-hvg"
-    data_file: str = ""                   # relative path under cellot/cellot_gpu/
+    data_file: str = ""
 
-    # Preprocessing metadata (documentation only — doesn't affect training)
+    # Source datasets the .h5ad is built from. These are the pre-processed
+    # "sampled" files Josh produced (see speciesOT/baseline/analysis/01.5 §1).
+    source_datasets: dict = field(default_factory=lambda: {
+        "mouse": "/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_muris/sampled_mouse_shared.h5ad",
+        "human": "/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_sapiens/sampled_human_shared.h5ad",
+    })
+
+    # Documented properties of the source datasets (recorded for provenance —
+    # the source files were filtered/capped upstream of 01.5, so the spec
+    # captures the intent rather than enforcing it).
+    assay_filter: dict = field(default_factory=lambda: {
+        "mouse": ["chromium_v2"],
+        "human": ["chromium_v3"],
+    })
+    cap_cells_per_type: dict = field(default_factory=lambda: {
+        "mouse": 1000,
+        "human": 1000,
+    })
+
+    # Ortholog mapping (used by 01.5 to align mouse↔human gene symbols).
+    ortholog_source: str = "biomart"
+
+    # HVG selection (the 01.5 stage).
     hvg_method: Optional[str] = None
+    hvg_n_top: int = 1000
     hvg_input_layer: Optional[str] = None
-    log1p_applied: Optional[bool] = None
     hvg_batch_key: str = "species"
+
+    # Whether the final `.X` is `log1p(normalize_total(counts))`. In the modern
+    # pipeline this is always True regardless of hvg_method (per 01.5 §3).
+    # Recorded for provenance and to document the contract scgen/IMPACT_CellOT
+    # depend on.
+    log1p_applied: Optional[bool] = True
 
     # Framing
     condition_column: str = "condition"
@@ -120,17 +154,31 @@ def write_spec_yaml(spec: ExperimentSpec, path: Path) -> Path:
     # Order top-level keys for readability
     ordered = {}
     key_order = [
+        # Identity
         "experiment_tag", "derived_from",
+        # Data inputs and provenance
         "data_source", "data_file",
-        "hvg_method", "hvg_input_layer", "log1p_applied", "hvg_batch_key",
+        "source_datasets",
+        "assay_filter", "cap_cells_per_type",
+        "ortholog_source",
+        # HVG selection
+        "hvg_method", "hvg_n_top", "hvg_input_layer", "hvg_batch_key",
+        "log1p_applied",
+        # Framing
         "condition_column", "source", "target",
+        # Holdout
         "holdout_cell_types", "holdout_species", "datasplit_strategy",
         "mode", "test_size", "random_state",
+        # Architecture — scGen
         "scgen_hidden_units", "scgen_latent_dim", "scgen_lr",
         "scgen_batch_size", "scgen_n_iters",
+        # Architecture — IMPACT_CellOT
         "impact_hidden_units", "impact_latent_dim", "impact_lr",
         "impact_batch_size", "impact_n_iters", "impact_n_inner_iters",
-        "data_space_n_cells", "notes",
+        # Eval
+        "data_space_n_cells",
+        # Free-form
+        "notes",
     ]
     for k in key_order:
         if k in data:
@@ -155,13 +203,46 @@ def load_spec_yaml(path: Path) -> ExperimentSpec:
     return ExperimentSpec(**filtered)
 
 
-def spec_from_record(rec: ModelRecord) -> ExperimentSpec:
-    """Reverse-engineer an ExperimentSpec from any ModelRecord.
+def _apply_record_to_scgen_slot(rec: ModelRecord, spec: ExperimentSpec) -> None:
+    """Copy a scgen ModelRecord's hyperparameters into the scgen_* slot of spec."""
+    if rec.hidden_units:
+        spec.scgen_hidden_units = list(rec.hidden_units)
+    if rec.latent_dim:
+        spec.scgen_latent_dim = rec.latent_dim
+    if rec.lr:
+        spec.scgen_lr = rec.lr
+    if rec.batch_size:
+        spec.scgen_batch_size = rec.batch_size
+    if rec.n_iters:
+        spec.scgen_n_iters = rec.n_iters
 
-    Note: a single ModelRecord describes ONE model (e.g. impact_cellot of
-    some cell), but an ExperimentSpec describes the CELL (both scgen +
-    impact_cellot). We use defaults for the sibling model's hyperparameters
-    unless the record itself is for that sibling.
+
+def _apply_record_to_impact_slot(rec: ModelRecord, spec: ExperimentSpec) -> None:
+    """Copy an impact_cellot ModelRecord's hyperparameters into the impact_* slot."""
+    if rec.hidden_units:
+        spec.impact_hidden_units = list(rec.hidden_units)
+    if rec.latent_dim:
+        spec.impact_latent_dim = rec.latent_dim
+    if rec.lr:
+        spec.impact_lr = rec.lr
+    if rec.batch_size:
+        spec.impact_batch_size = rec.batch_size
+    if rec.n_iters:
+        spec.impact_n_iters = rec.n_iters
+    if rec.n_inner_iters:
+        spec.impact_n_inner_iters = rec.n_inner_iters
+
+
+def spec_from_record(rec: ModelRecord, sibling: Optional[ModelRecord] = None) -> ExperimentSpec:
+    """Reverse-engineer an ExperimentSpec from a ModelRecord (and optional sibling).
+
+    A single ModelRecord describes ONE model (e.g. impact_cellot of some cell),
+    but an ExperimentSpec describes the CELL (both scgen + impact_cellot). If a
+    `sibling` ModelRecord is provided, its hyperparameters fill the
+    counterpart slot. Otherwise we use defaults for the sibling.
+
+    The CLI's spec dump uses build_catalog().find_sibling(rec) to populate the
+    sibling automatically when one exists on disk.
     """
     # The experiment tag is the parent dir of the model dir.
     parts = rec.run_id.split("/")
@@ -190,31 +271,34 @@ def spec_from_record(rec: ModelRecord) -> ExperimentSpec:
 
     # Inject hyperparameters from THIS record's model into the matching slot.
     if rec.family == "scgen":
-        if rec.hidden_units:
-            spec.scgen_hidden_units = list(rec.hidden_units)
-        if rec.latent_dim:
-            spec.scgen_latent_dim = rec.latent_dim
-        if rec.lr:
-            spec.scgen_lr = rec.lr
-        if rec.batch_size:
-            spec.scgen_batch_size = rec.batch_size
-        if rec.n_iters:
-            spec.scgen_n_iters = rec.n_iters
+        _apply_record_to_scgen_slot(rec, spec)
     elif rec.family == "impact_cellot":
-        if rec.hidden_units:
-            spec.impact_hidden_units = list(rec.hidden_units)
-        if rec.latent_dim:
-            spec.impact_latent_dim = rec.latent_dim
-        if rec.lr:
-            spec.impact_lr = rec.lr
-        if rec.batch_size:
-            spec.impact_batch_size = rec.batch_size
-        if rec.n_iters:
-            spec.impact_n_iters = rec.n_iters
-        if rec.n_inner_iters:
-            spec.impact_n_inner_iters = rec.n_inner_iters
+        _apply_record_to_impact_slot(rec, spec)
+
+    # If we have a sibling, fill the OTHER slot with its actual values so the
+    # round-trip is lossless.
+    if sibling is not None:
+        if sibling.family == "scgen":
+            _apply_record_to_scgen_slot(sibling, spec)
+        elif sibling.family == "impact_cellot":
+            _apply_record_to_impact_slot(sibling, spec)
 
     return spec
+
+
+def find_cell_sibling(rec: ModelRecord, all_records: list[ModelRecord]) -> Optional[ModelRecord]:
+    """Find the scgen↔impact_cellot sibling of `rec` in the same experiment dir.
+
+    Returns the sibling ModelRecord if found, else None.
+    """
+    if rec.family not in {"scgen", "impact_cellot"}:
+        return None
+    want_family = "impact_cellot" if rec.family == "scgen" else "scgen"
+    parent = rec.model_dir.parent
+    for other in all_records:
+        if other.family == want_family and other.model_dir.parent == parent:
+            return other
+    return None
 
 
 # ---------------------------------------------------------------------------

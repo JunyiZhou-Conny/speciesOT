@@ -2,7 +2,7 @@
 
 A model-card catalog for every CellOT/IMPACT_CellOT/scGen run in this project. v0 is **read-only** — it discovers what's already on disk, parses it, and presents it in a queryable form.
 
-Design doc: [`hub_v0_design.md`](hub_v0_design.md).
+Design doc: [`hub_design.md`](hub_design.md).
 Conceptual context: [`conceptual_framework.md`](conceptual_framework.md).
 
 ---

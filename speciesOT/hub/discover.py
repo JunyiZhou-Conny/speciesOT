@@ -140,16 +140,23 @@ def _classify_data_source(
     elif "hvg_seurat" in p:
         hvg_method = "seurat"
 
-    # HVG input layer + log1p (from FLAVOR_INPUT in regenerate_hvg_flavor_run_matrix.py)
+    # HVG input layer: which layer the HVG selection function consumed.
+    # (CORRECTED from earlier heuristic; verified against 01.5 §3 / §5 commentary.)
     if hvg_method in {"seurat_v3", "seurat_v3_paper", "pearson_residuals"}:
         hvg_input_layer = "layers['counts']"
-        log1p_applied = False
     elif hvg_method in {"seurat", "cell_ranger"}:
         hvg_input_layer = "X (log-norm)"
-        log1p_applied = True
     else:
         hvg_input_layer = None
-        log1p_applied = None
+
+    # log1p_applied: in the modern hvg-flavor pipeline, `.X` is ALWAYS
+    # `log1p(normalize_total(counts))`, regardless of which layer HVG selection
+    # consumed. Per notebook 01.5 §3: "Each file carries .X (log1p(normalize_total
+    # (counts))) ... .layers['counts'] is dropped before write (downstream training
+    # only consumes .X)." So all hvg_flavor data files have log1p_applied=True.
+    # Older/legacy data sources (speciesot-human-mouse stale) follow the same
+    # convention (scgen training consumes log-normed .X).
+    log1p_applied = True if data_source != "unknown" else None
 
     return data_source, normalization, log1p_applied, hvg_method, hvg_input_layer
 

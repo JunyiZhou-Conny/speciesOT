@@ -2,10 +2,23 @@ experiment_tag: hvg_pearson_residuals_m2_ood
 derived_from: gpu/hvg_pearson_residuals_m2_ood/impact_cellot
 data_source: speciesot-human-mouse-hvg
 data_file: datasets/speciesot-human-mouse-hvg/hvg_pearson_residuals_m2_v07.h5ad
+source_datasets:
+  mouse: /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_muris/sampled_mouse_shared.h5ad
+  human: /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_sapiens/sampled_human_shared.h5ad
+assay_filter:
+  mouse:
+  - chromium_v2
+  human:
+  - chromium_v3
+cap_cells_per_type:
+  mouse: 1000
+  human: 1000
+ortholog_source: biomart
 hvg_method: pearson_residuals
+hvg_n_top: 1000
 hvg_input_layer: layers['counts']
-log1p_applied: false
 hvg_batch_key: species
+log1p_applied: true
 condition_column: condition
 source: mouse
 target: human
