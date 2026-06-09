@@ -147,15 +147,43 @@ you want an agent to create/append notes programmatically.
 
 ## 7. Git hygiene for a smooth two-machine life
 
-- `.obsidian/workspace*.json` (window layout, which note was open) churns constantly and
-  causes noise/conflicts — it's already in `.gitignore`. The rest of `.obsidian/` (graph
-  colors, enabled plugins) *is* committed so both machines share config.
+- `docs/.obsidian/workspace*.json` (window layout, which note was open) churns constantly and
+  causes noise/conflicts — it's in `.gitignore`. The rest of `docs/.obsidian/` (graph
+  colors, enabled plugins) *should be committed* so both machines share config.
+- `.DS_Store` and `docs/Untitled.canvas` are gitignored (Mac/Obsidian scratch).
 - If you ever hit a merge conflict, it'll be in a markdown note — open it, keep both
   sides' text (knowledge is additive), delete the `<<<<<<<`/`=======`/`>>>>>>>` markers.
 - **Figures don't sync** (they live under gitignored `results/.../figures/`). Experiment
   notes therefore link concepts + metrics, not images. To view a run's diagnostic
   figures, open its rich card in Cursor *on the HPC* (`docs/model_cards/<id>.md`). A
   future enhancement can copy small PNG thumbnails into a tracked `docs/_assets/`.
+
+### 7.1 First time on the Mac — what `git status` is showing
+
+If you see untracked `docs/.obsidian/`, `.DS_Store`, `docs/2nd_brain/`, etc.:
+
+| Path | What to do |
+|---|---|
+| **`docs/.obsidian/`** (except workspace) | **Commit it** — graph colors, Dataview, plugins. Run `git add docs/.obsidian/` (workspace.json is ignored automatically). |
+| **`.DS_Store`** | **Ignore** — already in `.gitignore`; disappears after you `git pull` the updated ignore rules. |
+| **`docs/2nd_brain/`** | **Your call.** Personal scratch → add `docs/2nd_brain/` to `.gitignore`. Want it synced → `git add docs/2nd_brain/`. |
+| **`docs/Untitled.canvas`** | **Delete** in Obsidian or Finder (empty scratch canvas). Already gitignored. |
+| **"Your branch is behind origin/main"** | **`git pull` first** — brings vault + `.gitignore` fixes from HPC before you commit Mac-only files. |
+
+Typical Mac sequence after opening the vault once:
+
+```bash
+cd ~/code/speciesOT          # wherever you cloned
+git pull                     # get latest from GitHub (includes vault scaffold)
+git add docs/.obsidian/      # Obsidian config (shared)
+# optional: git add docs/2nd_brain/   if you want that folder synced
+git status                   # should NOT list .DS_Store or Untitled.canvas anymore
+git commit -m "obsidian: Mac vault config"
+git push
+```
+
+You do **not** need to commit anything from `.obsidian/` manually every day — only when
+you change graph colors or install a new community plugin you want on both machines.
 
 ---
 
