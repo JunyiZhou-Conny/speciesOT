@@ -147,10 +147,11 @@ you want an agent to create/append notes programmatically.
 
 ## 7. Git hygiene for a smooth two-machine life
 
-- `docs/.obsidian/workspace*.json` (window layout, which note was open) churns constantly and
-  causes noise/conflicts — it's in `.gitignore`. The rest of `docs/.obsidian/` (graph
-  colors, enabled plugins) *should be committed* so both machines share config.
-- `.DS_Store` and `docs/Untitled.canvas` are gitignored (Mac/Obsidian scratch).
+- **Ignored (UI / visual fumbling — never commit):** `workspace*.json`, `graph.json`,
+  `appearance.json`, `app.json`, `hotkeys.json`, `canvas.json`, `cache/`, `trash/`,
+  `plugins/**/data.json`, `docs/*.canvas`.
+- **Do commit (once, when plugins change):** `community-plugins.json`, `core-plugins.json`,
+  and `plugins/*/` (Dataview, Templater manifests + JS).
 - If you ever hit a merge conflict, it'll be in a markdown note — open it, keep both
   sides' text (knowledge is additive), delete the `<<<<<<<`/`=======`/`>>>>>>>` markers.
 - **Figures don't sync** (they live under gitignored `results/.../figures/`). Experiment
@@ -164,7 +165,7 @@ If you see untracked `docs/.obsidian/`, `.DS_Store`, `docs/2nd_brain/`, etc.:
 
 | Path | What to do |
 |---|---|
-| **`docs/.obsidian/`** (except workspace) | **Commit it** — graph colors, Dataview, plugins. Run `git add docs/.obsidian/` (workspace.json is ignored automatically). |
+| **`docs/.obsidian/`** | **Commit once:** `community-plugins.json`, `core-plugins.json`, `plugins/*/`. **Ignore:** workspace, graph, appearance, app, hotkeys, canvas UI files. |
 | **`.DS_Store`** | **Ignore** — already in `.gitignore`; disappears after you `git pull` the updated ignore rules. |
 | **`docs/2nd_brain/`** | **Your call.** Personal scratch → add `docs/2nd_brain/` to `.gitignore`. Want it synced → `git add docs/2nd_brain/`. |
 | **`docs/Untitled.canvas`** | **Delete** in Obsidian or Finder (empty scratch canvas). Already gitignored. |
@@ -175,7 +176,8 @@ Typical Mac sequence after opening the vault once:
 ```bash
 cd ~/code/speciesOT          # wherever you cloned
 git pull                     # get latest from GitHub (includes vault scaffold)
-git add docs/.obsidian/      # Obsidian config (shared)
+git add docs/.obsidian/community-plugins.json docs/.obsidian/core-plugins.json docs/.obsidian/plugins/
+# graph.json + workspace.json are ignored — do not add them
 # optional: git add docs/2nd_brain/   if you want that folder synced
 git status                   # should NOT list .DS_Store or Untitled.canvas anymore
 git commit -m "obsidian: Mac vault config"
@@ -183,7 +185,27 @@ git push
 ```
 
 You do **not** need to commit anything from `.obsidian/` manually every day — only when
-you change graph colors or install a new community plugin you want on both machines.
+you install or remove a community plugin you want on both machines.
+
+### 7.2 Sync order (HPC ↔ Mac ↔ GitHub)
+
+GitHub (`origin`) is the middleman. **Changes must be pushed before the other machine can pull them.**
+
+```
+HPC edits .gitignore  →  commit + push origin main  →  Mac: git pull
+Mac edits concept note  →  commit + push origin main  →  HPC: git pull
+```
+
+If I (the agent) change files on the **cluster**, those edits are **not on your Mac until someone commits and pushes from the cluster**, then you `git pull` on the Mac. Same the other way around for your Mac Obsidian commit.
+
+After pulling the expanded `.gitignore`, run once on the Mac to stop tracking files already committed:
+
+```bash
+git rm --cached docs/.obsidian/graph.json docs/.obsidian/workspace.json 2>/dev/null
+git rm --cached docs/.obsidian/appearance.json docs/.obsidian/app.json 2>/dev/null
+git commit -m "stop tracking Obsidian UI state files"
+git push
+```
 
 ---
 

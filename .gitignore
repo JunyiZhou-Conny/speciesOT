@@ -77,15 +77,24 @@ speciesOT/baseline/analysis/interactive_species_overlay.html
 docs/model_cards/
 
 # --- Obsidian vault (docs/ is opened as a vault on the Mac) ---
-# Commit shared config under docs/.obsidian/ (graph colors, enabled plugins).
-# Ignore per-machine churn only.
+# Commit: community-plugins.json, core-plugins.json, plugins/*/ (shared plugin installs).
+# Ignore: per-machine UI state (changes when you open the app, pan the graph, tweak panes).
 docs/.obsidian/workspace.json
 docs/.obsidian/workspace*.json
+docs/.obsidian/workspace-mobile.json
+docs/.obsidian/graph.json
 docs/.obsidian/cache
+docs/.obsidian/trash/
+docs/.obsidian/hotkeys.json
+docs/.obsidian/appearance.json
+docs/.obsidian/app.json
+docs/.obsidian/canvas.json
+docs/.obsidian/plugins/**/data.json
+# Canvases are visual scratch — ignore unless you deliberately name and track one
+docs/*.canvas
+docs/**/Untitled.canvas
 # macOS folder metadata (never commit)
 .DS_Store
 **/.DS_Store
-# Scratch Obsidian canvases unless you intentionally name and commit one
-docs/Untitled.canvas
 # Note: docs/experiments/ IS tracked (the synced Obsidian graph notes from `./hub vault`).
 # docs/2nd_brain/ — personal; add here if you want it Mac-only and out of git.
