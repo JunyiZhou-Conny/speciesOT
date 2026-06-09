@@ -225,6 +225,27 @@ There's a `josh` remote at `https://github.com/JoshuaPrice/speciesOT.git` with ~
    - Update root `README.md` to point at the new `docs/` structure
 5. **v3 (eventually) — `./hub submit <spec.yaml>`**: actually launch the sbatch chain after confirming dependencies. Currently the chain is printed and user pastes. v3 would automate but should require a `--confirm` flag.
 6. **v2.5 (eventually) — `./hub figure-pack <run_id>`**: regenerate diagnostic UMAPs / biomarker plots from scratch for newly-trained models (the matcher in v0.5 only links existing figures; can't generate new ones).
+7. **Upgrade torch in the `CellOT` env for modern-GPU compatibility** (postponed 2026-06-02). The env ships `torch 1.11.0+cu102`, whose CUDA kernels only support compute capability ≤ sm_70. On `gpu_requeue`, jobs that land on A40/A100/A6000/H100 (sm_80+) die with `CUDA error: no kernel image is available for execution on the device`. Two mitigations now in place; the upgrade is the real fix:
+   - The hub pins GPU training to V100 nodes via `#SBATCH --constraint=v100` (`spec.py:_GPU_CONSTRAINT`). Clear/relax this constant once torch is upgraded.
+   - IMPACT_CellOT can now train on CPU via the spec field `impact_train_device: cpu` (renders a `shared`-partition sbatch with `--config.device cpu`). The model is small enough that CPU is a fine fallback when no compatible GPU is free. Default remains `gpu`.
+   - Upgrading torch must be validated against the rest of the env's pins (scgen/cellot code, numba/umap). Do it in a throwaway clone of the env first.
+
+   Also fixed 2026-06-02: hub-generated sbatches now `export PYTHONPATH=<cellot_gpu>` (the `cellot` package is not pip-installed in the env, so `import cellot` otherwise resolved to the empty outer namespace dir and crashed).
+
+### Shipped 2026-06-04 — extended metrics + handoff manifest
+
+- **Extended metrics.** `cellot.losses.mmd.compute_mmd_two_sample` powers the MMD floor (self-MMD of treated), ceiling (`MMD(mouse control, real human)` = identity / no-transport gap), and model MMD; `cellot.losses.divergence.compute_marginal_divergence` adds per-gene KL / Jensen-Shannon (the Figure-G marginal view). `scripts/dump_eval_clouds.py` now also caches `control` + `genes`; `scripts/extended_metrics.py` writes an `extended_metrics.csv` sidecar.
+- **`./hub metrics <run_id>`** computes the sidecar (shells out to the CellOT-env script, reusing `eval_clouds.npz`). The catalog reads it (`readers.read_extended_metrics`) and `show` / `card` / `compare` surface floor / ceiling / fraction-of-gap-closed / mean-JS.
+- **`./hub handoff <run_id>`** emits a manifest (md + json under `handoff/`) bundling the three whiteboard boundary artifacts: processed dataset pointer, preprocessing description (spec intent fields), and model spec — the deliverable for the downstream (mentor) track.
+- **Key finding** (see `docs/conceptual_framework.md` §5.9 and `speciesOT/baseline/analysis/20_m1_mmd_investigation.ipynb`): for the matched lung monocytes the ceiling (~0.09) is *below* the model MMD (~0.11-0.14), so `frac_gap_closed` is negative — the cross-species gap is small and OT overshoots the distribution while still fixing the per-gene mean (R^2 ~0.94). This explains why M2 → M1 raised R^2 but not MMD.
+- **Notebook 21** (`speciesOT/baseline/analysis/21_data_imbalanced.ipynb`) diagnoses the M1 held-out monocyte heterogeneity (a detached Leiden sub-cluster + donor-concentrated scatter; tissue is constant lung).
+- Still open: **`./hub figure-pack`** could promote the atlas-UMAP recipe (notebook 20 §5) and the nb21 diagnostics to a first-class hub command.
+
+### Shipped 2026-06-05 — enforced assay filter (single platform per species)
+
+- Notebook 21 found the M1 OOD "scatter" is **Smart-seq2 contamination**: the atlas sources mix platforms within each species (mouse: 187 × 10x 3' v2 + 32 × Smart-seq2; human: 179 × 10x 3' v3 + 28 × Smart-seq2), and ~77% of scattered cells (and the one detached UMAP cluster, 100%) are Smart-seq2. The `assay_filter` had been recorded as intent but never applied.
+- **Now enforced** in `speciesOT/hub/prep.py:_apply_assay_filter` (applied right after loading the source, before ortholog/HVG), defaulting to mouse `10x 3' v2` / human `10x 3' v3`. `ExperimentSpec.assay_filter` is documented as a required treatment (accepts `chromium_v{2,3}` aliases, literal assay strings, or EFO ids). Full detail in `docs/conceptual_framework.md` §5.10.
+- **Caveat:** existing `_v07.h5ad` datasets predate enforcement and still contain Smart-seq2; applying it needs a `./hub prep` rebuild (`_v08`) + retrain (file with the §5.7 stratification fix).
 
 ## 9. Acceptance criteria for v2
 

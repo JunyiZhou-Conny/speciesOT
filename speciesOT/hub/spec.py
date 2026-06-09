@@ -81,9 +81,15 @@ class ExperimentSpec:
         "human": "/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_sapiens/sampled_human_shared.h5ad",
     })
 
-    # Documented properties of the source datasets (recorded for provenance —
-    # the source files were filtered/capped upstream of 01.5, so the spec
-    # captures the intent rather than enforcing it).
+    # ENFORCED preprocessing treatment (since 2026-06-05): `./hub prep` keeps only
+    # these assays per species and drops the rest. The atlas sources mix platforms
+    # (10x droplet vs Smart-seq2 plate-based); the Smart-seq2 minority has a very
+    # different expression distribution and was the OOD "scatter" / MMD inflator
+    # (see notebook 21 + docs/conceptual_framework.md §5.10). Tokens accept the
+    # `chromium_v{2,3}` aliases, the literal `10x 3' v{2,3}` strings, or the EFO
+    # ids (see prep.py:_ASSAY_ALIASES). Default = one droplet platform per species:
+    # mouse 10x 3' v2, human 10x 3' v3. Leave empty only to deliberately disable
+    # the treatment (prep warns loudly).
     assay_filter: dict = field(default_factory=lambda: {
         "mouse": ["chromium_v2"],
         "human": ["chromium_v3"],
@@ -95,6 +101,11 @@ class ExperimentSpec:
 
     # Ortholog mapping (used by 01.5 to align mouse↔human gene symbols).
     ortholog_source: str = "biomart"
+
+    # Use the backed-mode prep path (speciesOT/hub/prep_backed.py) for LARGE source
+    # files that can't be full-loaded (e.g. the 43GB tabula_*_all.h5ad full atlas).
+    # The default in-memory path (prep.py) is fine for the ~50k sampled_*_shared files.
+    source_backed: bool = False
 
     # HVG selection (the 01.5 stage).
     hvg_method: Optional[str] = None
@@ -120,6 +131,12 @@ class ExperimentSpec:
     mode: str = "ood"                     # "ood" or "iid"
     test_size: float = 0.2
     random_state: int = 0
+    # Stratify the 50/50 ignore/ood split of the holdout pool on this obs column
+    # (e.g. "condition" = species) so the OOD subset is balanced. None = the
+    # original unstratified behaviour (which drifts, see conceptual_framework §5.7).
+    # Setting it renders `stratify: <col>` into the config datasplit block, read by
+    # cell.py:split_cell_data_toggle_ood. Opt-in so existing splits are unchanged.
+    datasplit_stratify: Optional[str] = None
 
     # Architecture — scGen
     scgen_hidden_units: list[int] = field(default_factory=lambda: [256, 256])
@@ -135,6 +152,13 @@ class ExperimentSpec:
     impact_batch_size: int = 128
     impact_n_iters: int = 50000
     impact_n_inner_iters: int = 10
+
+    # Where IMPACT_CellOT trains: "gpu" (gpu_requeue + V100 constraint, default)
+    # or "cpu" (shared partition, --config.device cpu). The model is small enough
+    # to train on CPU; use "cpu" to avoid waiting on a scarce compatible GPU.
+    # scGen always trains on CPU regardless. See docs/hub_handoff.md §8 for the
+    # torch-upgrade follow-up that would widen GPU compatibility.
+    impact_train_device: str = "gpu"
 
     # Eval n_cells for data_space (latent uses defaults from evaluate.py)
     data_space_n_cells: str = "30,50,80"
@@ -160,7 +184,7 @@ def write_spec_yaml(spec: ExperimentSpec, path: Path) -> Path:
         "data_source", "data_file",
         "source_datasets",
         "assay_filter", "cap_cells_per_type",
-        "ortholog_source",
+        "ortholog_source", "source_backed",
         # HVG selection
         "hvg_method", "hvg_n_top", "hvg_input_layer", "hvg_batch_key",
         "log1p_applied",
@@ -168,13 +192,14 @@ def write_spec_yaml(spec: ExperimentSpec, path: Path) -> Path:
         "condition_column", "source", "target",
         # Holdout
         "holdout_cell_types", "holdout_species", "datasplit_strategy",
-        "mode", "test_size", "random_state",
+        "mode", "test_size", "random_state", "datasplit_stratify",
         # Architecture — scGen
         "scgen_hidden_units", "scgen_latent_dim", "scgen_lr",
         "scgen_batch_size", "scgen_n_iters",
         # Architecture — IMPACT_CellOT
         "impact_hidden_units", "impact_latent_dim", "impact_lr",
         "impact_batch_size", "impact_n_iters", "impact_n_inner_iters",
+        "impact_train_device",
         # Eval
         "data_space_n_cells",
         # Free-form
@@ -319,6 +344,11 @@ def _hidden_units_yaml(units: list[int]) -> str:
     return "\n".join(f"  - {u}" for u in units)
 
 
+def _stratify_line(spec: ExperimentSpec) -> str:
+    """Render the optional datasplit `stratify:` line (with trailing newline) or ''."""
+    return f"  stratify: {spec.datasplit_stratify}\n" if spec.datasplit_stratify else ""
+
+
 # ---------------------------------------------------------------------------
 # Config rendering
 # ---------------------------------------------------------------------------
@@ -345,7 +375,7 @@ datasplit:
   groupby: condition
   random_state: {spec.random_state}
   test_size: {spec.test_size}
-device: cuda
+{_stratify_line(spec)}device: cuda
 model:
   beta: 0.0
   dropout: 0.1
@@ -392,7 +422,7 @@ datasplit:
   groupby: condition
   random_state: {spec.random_state}
   test_size: {spec.test_size}
-device: cuda
+{_stratify_line(spec)}device: cuda
 model:
   g:
     fnorm_penalty: 1
@@ -427,7 +457,20 @@ _PREAMBLE = f"""\
 cd {CELLOT_DIR}/
 
 module load python
-mamba activate CellOT"""
+mamba activate CellOT
+
+# The cellot package is not pip-installed in the CellOT env; put cellot_gpu on
+# the path so `import cellot` resolves to this tree (not the empty outer
+# namespace package one dir up).
+export PYTHONPATH={CELLOT_DIR}:$PYTHONPATH"""
+
+
+# The CellOT env ships torch 1.11+cu102, whose kernels only support up to
+# compute capability sm_70. Newer cards on gpu_requeue (A40/A100/A6000/H100,
+# sm_80+) raise "no kernel image is available for execution on the device". Pin
+# GPU jobs to V100 nodes (sm_70 == feature `v100` / `cc7.0`) so training can't
+# land on an incompatible card. Override/clear if torch is ever upgraded.
+_GPU_CONSTRAINT = "v100"
 
 
 def _sbatch_header(jobname: str, time: str, partition: str, mem: str,
@@ -441,6 +484,8 @@ def _sbatch_header(jobname: str, time: str, partition: str, mem: str,
     ]
     if gres:
         lines.append(f"#SBATCH --gres={gres}")
+        if _GPU_CONSTRAINT:
+            lines.append(f"#SBATCH --constraint={_GPU_CONSTRAINT}")
     lines += [
         f"#SBATCH --mem={mem}",
         f"#SBATCH -o {outdir}/{log_prefix}_%j.out",
@@ -455,9 +500,26 @@ def render_train_sbatch(spec: ExperimentSpec, model_dir: str, gpu: bool = False)
     short_flavor = (spec.hvg_method or "exp")[:2]
     suffix = "imp" if model_dir == "impact_cellot" else "sg"
     short = f"{short_flavor}_{tag.split('_')[-2] if '_' in tag else tag}_{spec.mode}_{suffix}"
+
+    # IMPACT_CellOT can train on GPU or CPU per spec.impact_train_device; scGen
+    # always trains on CPU. We pass --config.device explicitly so the run uses
+    # the intended device regardless of what's baked into config.yaml.
+    device_override = ""
+    if model_dir == "impact_cellot":
+        if spec.impact_train_device == "cpu":
+            gpu = False
+            device_override = " \\\n    --config.device cpu"
+        else:
+            gpu = True
+            device_override = " \\\n    --config.device cuda"
+
+    # IMPACT is the heavy run (adversarial inner loop), so give it the longer
+    # wall time even on CPU; scGen's autoencoder is quick.
+    is_impact = model_dir == "impact_cellot"
+    walltime = "12:00:00" if (gpu or is_impact) else "4:00:00"
     header = _sbatch_header(
         short,
-        "12:00:00" if gpu else "4:00:00",
+        walltime,
         "gpu_requeue" if gpu else "shared",
         "32G",
         out_sub,
@@ -470,7 +532,7 @@ def render_train_sbatch(spec: ExperimentSpec, model_dir: str, gpu: bool = False)
 
 python ./scripts/train.py \\
     --outdir ./results/{tag}/{model_dir} \\
-    --config ./results/{tag}/{model_dir}/config.yaml
+    --config ./results/{tag}/{model_dir}/config.yaml{device_override}
 """
 
 
@@ -601,7 +663,7 @@ def generate_artifacts(spec: ExperimentSpec, dry_run: bool = False,
     )
     _maybe_write(
         train_dir / f"train_{tag}_impact_cellot.sbatch",
-        render_train_sbatch(spec, "impact_cellot", gpu=True),
+        render_train_sbatch(spec, "impact_cellot"),
         dry_run, force, plan,
     )
 

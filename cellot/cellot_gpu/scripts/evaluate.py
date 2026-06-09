@@ -41,6 +41,8 @@ flags.DEFINE_string('subname', '', '')
 
 
 def compute_mmd_loss(lhs, rhs, gammas):
+    # the gammas come from line 61
+    # 50 bandwidths from 10 down to 0.001, a standard kernel ensemble trick
     return np.mean([mmd_distance(lhs, rhs, g) for g in gammas])
 
 
@@ -67,6 +69,7 @@ def compute_evaluations(iterator):
 
         yield ncells, nfeatures, 'l2-means', np.linalg.norm(mut - mui)
         yield ncells, nfeatures, 'l2-stds', np.linalg.norm(stdt - stdi)
+        # This is just Pearson correlation, not R^2
         yield ncells, nfeatures, 'r2-means', pd.Series.corr(mut, mui)
         yield ncells, nfeatures, 'r2-stds', pd.Series.corr(stdt, stdi)
         yield ncells, nfeatures, 'r2-pairwise_feat_corrs', pd.Series.corr(pwct, pwci)
@@ -85,10 +88,10 @@ def compute_evaluations(iterator):
 
 
 def main(argv):
-    expdir = Path(FLAGS.outdir)
-    setting = FLAGS.setting
-    where = FLAGS.where
-    embedding = FLAGS.embedding
+    expdir = Path(FLAGS.outdir) # the model directory
+    setting = FLAGS.setting # iid or ood
+    where = FLAGS.where # data_space or latent_space
+    embedding = FLAGS.embedding # pca or ae or None
     prefix = FLAGS.evalprefix
     n_reps = FLAGS.n_reps
 
@@ -107,16 +110,35 @@ def main(argv):
 
     outdir.mkdir(exist_ok=True, parents=True)
 
-    def iterate_feature_slices():
+# Purpose here is to generate the imputed.h5ad file and the treateddf
+# One is the the predicted target cells, the other is the ground truth target cells
+# Both will have shape (n_cells, n_features)
 
+
+# A nested function because it needs access to expdir, where, setting, embedding, n_reps sort of stuff
+
+    def iterate_feature_slices():
+        # assert raises AssertionError if the config.yaml file does not exist
         assert (expdir / 'config.yaml').exists()
+        # reads the config.yaml, loads the model, config is now a dictionary items can be accessed with config.data.ae_emb.path
         config = load_config(expdir / 'config.yaml')
+        # Checks whether the config has an ae_emb section under data
+        # True, meaning that this is an IMPACT_CellOT model, so pointing to its sibling scGen autoencoder
+        # False, this is a scGen model, so no ae_emb section
         if 'ae_emb' in config.data:
+            # here is an extra layer of protection to make sure that the model is an IMPACT_CellOT model
             assert config.model.name == 'cellot'
             config.data.ae_emb.path = str(expdir.parent / 'model-scgen')
         cache = outdir / 'imputed.h5ad'
 
         print('[eval] Loading model and generating predictions...', flush=True)
+        # _ is the control cells, which are not used in this script
+        # imputed is the predicted target cells
+        # treateddf is the ground truth target cells
+
+        # Here is the slight bug
+        # if embeding is None, then load_conditions produces 50-d latent-space outputs
+        # if it is ae, it produces 1000-d gene-space outputs
         _, treateddf, imputed = load_conditions(
                 expdir, where, setting, embedding=embedding)
 

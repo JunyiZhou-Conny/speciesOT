@@ -14,6 +14,8 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
 from typing import Any
 
@@ -28,6 +30,11 @@ from speciesOT.hub.render import (
     render_comparison,
     write_card,
     write_index,
+)
+from speciesOT.hub.vault import (
+    DEFAULT_EXPERIMENTS_DIR,
+    write_experiment_note,
+    write_experiments_index,
 )
 from speciesOT.hub.spec import (
     ExperimentSpec,
@@ -225,6 +232,11 @@ def _show_command(args: argparse.Namespace) -> int:
         print(f"    n_cells present   : {_format_value(ev.n_cells_present)}")
         print(f"    R^2 of means      : {_format_value(ev.headline_r2_means)}")
         print(f"    MMD               : {_format_value(ev.headline_mmd)}")
+        if ev.headline_mmd_floor is not None or ev.headline_mmd_ceiling is not None:
+            print(f"    MMD floor/ceiling : {_format_value(ev.headline_mmd_floor)} / {_format_value(ev.headline_mmd_ceiling)}")
+            print(f"    frac gap closed   : {_format_value(ev.frac_gap_closed)}")
+        if ev.headline_js is not None:
+            print(f"    mean per-gene JS  : {_format_value(ev.headline_js)}")
         print(f"    last run at       : {_format_value(ev.last_run_at)}")
         print(f"    imputed h5ad      : {_format_value(ev.imputed_h5ad_path)}")
 
@@ -271,32 +283,257 @@ def _card_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _vault_command(args: argparse.Namespace) -> int:
+    """Generate Obsidian-ready experiment notes (frontmatter + tags + wikilinks).
+
+    Unlike `./hub card` (rich, HPC-only, gitignored), these notes are tracked
+    and meant to sync to a local Obsidian vault. See docs/obsidian_setup.md.
+    """
+    catalog = build_catalog()
+    out_dir = args.out_dir or DEFAULT_EXPERIMENTS_DIR
+    all_ids = {r.run_id for r in catalog.records}
+    n = 0
+    for rec in catalog.records:
+        try:
+            write_experiment_note(rec, all_ids, out_dir)
+            n += 1
+        except OSError as e:
+            print(f"[hub] could not write vault note for {rec.run_id}: {e}", file=sys.stderr)
+    index_path = write_experiments_index(catalog.records, out_dir)
+    print(f"[hub] wrote {n} experiment notes + {index_path.name} to {out_dir}")
+    print("[hub] open docs/ as an Obsidian vault (see docs/obsidian_setup.md) to see the graph.")
+    return 0
+
+
 WORKSPACE_ROOT = Path("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT")
+CELLOT_DIR = WORKSPACE_ROOT / "cellot" / "cellot_gpu"
+
+
+# The data-prep stage needs scanpy >= 1.12 (Pearson residuals, seurat_v3_paper),
+# which lives in the `analysis` env — not the CellOT env the hub runs in. So
+# `./hub prep` shells out to the analysis interpreter running
+# `python -m speciesOT.hub.prep`. Override the interpreter with SPECIESOT_ANALYSIS_PY.
+_ANALYSIS_PY_CANDIDATES = [
+    os.environ.get("SPECIESOT_ANALYSIS_PY", ""),
+    "/n/home01/jzhou1125/miniforge3/envs/analysis/bin/python",
+    "/n/home01/jzhou1125/.conda/envs/analysis/bin/python",
+]
+
+
+def _resolve_analysis_py() -> str | None:
+    for cand in _ANALYSIS_PY_CANDIDATES:
+        if cand and Path(cand).exists():
+            return cand
+    return None
 
 
 def _prep_command(args: argparse.Namespace) -> int:
-    """Placeholder for v2 — not yet implemented.
+    """Materialize the training .h5ad from a spec (v2).
 
-    The intent is documented in docs/hub_design.md §14 and docs/hub_handoff.md §4.
-    Implementing this is the highest-priority next milestone.
+    Delegates to `python -m speciesOT.hub.prep` under the `analysis` conda env,
+    since the HVG flavors require scanpy >= 1.12 (not in the CellOT env). See
+    docs/hub_design.md §14 and docs/hub_handoff.md §4.
     """
-    print(
-        f"[hub] ./hub prep is NOT YET IMPLEMENTED (planned for v2).",
-        file=sys.stderr,
-    )
-    print(
-        f"[hub] requested spec: {args.spec}",
-        file=sys.stderr,
-    )
-    print(
-        f"[hub] for now, data prep is a notebook task — see speciesOT/baseline/analysis/01.5_data_prep_all_holdouts_hvg_flavors.ipynb",
-        file=sys.stderr,
-    )
-    print(
-        f"[hub] design + implementation notes: docs/hub_design.md §14 and docs/hub_handoff.md §4",
-        file=sys.stderr,
-    )
-    return 2
+    spec_path = args.spec
+    if not spec_path.exists():
+        print(f"[hub] spec not found: {spec_path}", file=sys.stderr)
+        return 2
+
+    analysis_py = _resolve_analysis_py()
+    if analysis_py is None:
+        print(
+            "[hub] could not locate the `analysis` env python (scanpy >= 1.12).\n"
+            "[hub] set SPECIESOT_ANALYSIS_PY to its interpreter, or activate the env and run:\n"
+            f"[hub]   python -m speciesOT.hub.prep {spec_path}",
+            file=sys.stderr,
+        )
+        return 2
+
+    cmd = [analysis_py, "-m", "speciesOT.hub.prep", str(spec_path.resolve())]
+    if args.force:
+        cmd.append("--force")
+    if args.keep_intermediate:
+        cmd.append("--keep-intermediate")
+
+    print(f"[hub] prep via analysis env: {analysis_py}")
+    print(f"[hub] $ {' '.join(cmd)}")
+    proc = subprocess.run(cmd, cwd=str(WORKSPACE_ROOT))
+    return proc.returncode
+
+
+def _metrics_command(args: argparse.Namespace) -> int:
+    """Compute extended metrics (MMD floor/ceiling, fraction-of-gap-closed, mean JS)
+    for a model's data-space eval(s) and write an `extended_metrics.csv` sidecar.
+
+    Shells out to `scripts/extended_metrics.py` using the current (CellOT-env)
+    interpreter; the hub catalog then surfaces the metrics in `show`/`card`/`compare`.
+    """
+    catalog = build_catalog()
+    try:
+        rec = catalog.by_run_id(args.run_id)
+    except ValueError as e:
+        print(f"[hub] {e}", file=sys.stderr)
+        return 2
+    if rec is None:
+        print(f"[hub] no model with run_id={args.run_id!r}", file=sys.stderr)
+        return 1
+
+    data_space_evals = [ev for ev in rec.evals if ev.space == "data_space"]
+    if not data_space_evals:
+        print(f"[hub] {rec.run_id} has no data_space eval to compute metrics on",
+              file=sys.stderr)
+        return 1
+
+    script = CELLOT_DIR / "scripts" / "extended_metrics.py"
+    env = dict(os.environ, PYTHONPATH=str(CELLOT_DIR))
+    rc = 0
+    for ev in data_space_evals:
+        cmd = [
+            sys.executable, str(script),
+            "--outdir", str(rec.model_dir),
+            "--setting", ev.setting or "ood",
+            "--where", "data_space",
+            "--embedding", "ae",
+            "--evalprefix", ev.eval_id,
+        ]
+        if args.n_cells:
+            cmd += ["--n_cells", args.n_cells]
+        print(f"[hub] metrics for {rec.run_id} [{ev.eval_id}]")
+        print(f"[hub] $ {' '.join(cmd)}")
+        proc = subprocess.run(cmd, cwd=str(CELLOT_DIR), env=env)
+        rc = rc or proc.returncode
+    return rc
+
+
+def _handoff_command(args: argparse.Namespace) -> int:
+    """Emit a handoff manifest bundling the three boundary artifacts for the
+    downstream (mentor) track: processed dataset, preprocessing description, and
+    model spec. Markdown + JSON.
+    """
+    from dataclasses import asdict
+
+    catalog = build_catalog()
+    try:
+        rec = catalog.by_run_id(args.run_id)
+    except ValueError as e:
+        print(f"[hub] {e}", file=sys.stderr)
+        return 2
+    if rec is None:
+        print(f"[hub] no model with run_id={args.run_id!r}", file=sys.stderr)
+        return 1
+
+    sibling = find_cell_sibling(rec, catalog.records)
+    spec = spec_from_record(rec, sibling=sibling)
+    spec_d = asdict(spec)
+
+    # 1. Processed dataset pointer (+ size if resolvable under cellot_gpu).
+    data_file = rec.data_file or spec.data_file or ""
+    data_path = (CELLOT_DIR / data_file) if data_file else None
+    data_exists = bool(data_path and data_path.exists())
+    data_bytes = data_path.stat().st_size if data_exists else None
+
+    # 2. Preprocessing description (the spec's intent fields).
+    prep_keys = [
+        "source_datasets", "assay_filter", "cap_cells_per_type", "ortholog_source",
+        "hvg_method", "hvg_n_top", "hvg_input_layer", "hvg_batch_key", "log1p_applied",
+        "holdout_cell_types", "holdout_species", "datasplit_strategy", "mode",
+        "test_size", "random_state",
+    ]
+    prep = {k: spec_d.get(k) for k in prep_keys}
+
+    # 3. Model spec (architecture + hyperparameters).
+    model_spec = {
+        "family": rec.family,
+        "model_name": rec.model_name,
+        "hidden_units": rec.hidden_units,
+        "latent_dim": rec.latent_dim,
+        "lr": rec.lr,
+        "batch_size": rec.batch_size,
+        "n_iters": rec.n_iters,
+        "n_inner_iters": rec.n_inner_iters,
+        "optimizer": rec.optimizer,
+        "ae_emb_path": rec.ae_emb_path,
+    }
+
+    # 4. Headline metrics for context.
+    evals_summary = []
+    for ev in rec.evals:
+        evals_summary.append({
+            "eval_id": ev.eval_id,
+            "r2_means": ev.headline_r2_means,
+            "mmd": ev.headline_mmd,
+            "mmd_floor": ev.headline_mmd_floor,
+            "mmd_ceiling": ev.headline_mmd_ceiling,
+            "frac_gap_closed": ev.frac_gap_closed,
+            "mean_js": ev.headline_js,
+        })
+
+    manifest = {
+        "run_id": rec.run_id,
+        "generated_at": catalog.discovered_at.isoformat(),
+        "processed_dataset": {
+            "data_file": data_file,
+            "exists": data_exists,
+            "bytes": data_bytes,
+        },
+        "preprocessing": prep,
+        "model_spec": model_spec,
+        "evaluations": evals_summary,
+    }
+
+    out_dir = args.out_dir or (WORKSPACE_ROOT / "handoff")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = rec.run_id.replace("/", "__")
+    json_path = out_dir / f"{stem}.handoff.json"
+    md_path = out_dir / f"{stem}.handoff.md"
+
+    import json as _json
+    json_path.write_text(_json.dumps(manifest, indent=2, default=str))
+
+    def _fmt(v):
+        return "—" if v is None else v
+
+    def _fmtr(v):
+        return "—" if v is None else (f"{v:.4f}" if isinstance(v, float) else v)
+
+    lines = [
+        f"# Handoff manifest — `{rec.run_id}`", "",
+        f"Generated {manifest['generated_at']}. The in-vitro (atlas) top-track "
+        "deliverable for the downstream (BCG / batch-correction / prediction) track.",
+        "",
+        "## 1. Processed dataset", "",
+        "| Field | Value |", "|---|---|",
+        f"| data_file | `{_fmt(data_file)}` |",
+        f"| exists | {data_exists} |",
+        f"| size (bytes) | {_fmt(data_bytes)} |",
+        "",
+        "## 2. Preprocessing description", "",
+        "| Field | Value |", "|---|---|",
+    ]
+    for k in prep_keys:
+        lines.append(f"| {k} | `{_fmt(prep.get(k))}` |")
+    lines += ["", "## 3. Model spec", "", "| Field | Value |", "|---|---|"]
+    for k, v in model_spec.items():
+        lines.append(f"| {k} | `{_fmt(v)}` |")
+    lines += ["", "## 4. Evaluations", ""]
+    if evals_summary:
+        lines += [
+            "| eval | R² | MMD | floor | ceiling | frac closed | mean JS |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for e in evals_summary:
+            lines.append(
+                f"| `{e['eval_id']}` | {_fmtr(e['r2_means'])} | {_fmtr(e['mmd'])} | "
+                f"{_fmtr(e['mmd_floor'])} | {_fmtr(e['mmd_ceiling'])} | "
+                f"{_fmtr(e['frac_gap_closed'])} | {_fmtr(e['mean_js'])} |"
+            )
+    else:
+        lines.append("_(no evaluations found)_")
+    lines.append("")
+    md_path.write_text("\n".join(lines))
+
+    print(f"[hub] wrote handoff manifest:\n  {md_path}\n  {json_path}")
+    return 0
 
 
 def _spec_dump_command(args: argparse.Namespace) -> int:
@@ -479,6 +716,18 @@ def main() -> int:
     )
     card_p.set_defaults(func=_card_command)
 
+    vault_p = sub.add_parser(
+        "vault",
+        help="generate Obsidian-ready experiment notes (frontmatter + tags + wikilinks) into docs/experiments/",
+    )
+    vault_p.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help=f"output directory (default: {DEFAULT_EXPERIMENTS_DIR})",
+    )
+    vault_p.set_defaults(func=_vault_command)
+
     attach_p = sub.add_parser(
         "attach-figures",
         help=(
@@ -566,10 +815,44 @@ def main() -> int:
 
     prep_p = sub.add_parser(
         "prep",
-        help="materialize the .h5ad data file from a spec (v2 — NOT YET IMPLEMENTED)",
+        help="materialize the .h5ad data file from a spec (v2; runs in the analysis env)",
     )
     prep_p.add_argument("spec", type=Path, help="path to a spec YAML")
+    prep_p.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite the output .h5ad if it already exists (default: refuse)",
+    )
+    prep_p.add_argument(
+        "--keep-intermediate",
+        action="store_true",
+        help="keep the pre-round-trip anndata-1.x temp file (for debugging)",
+    )
     prep_p.set_defaults(func=_prep_command)
+
+    metrics_p = sub.add_parser(
+        "metrics",
+        help="compute extended metrics (MMD floor/ceiling, fraction closed, mean JS) "
+        "for a model's data-space eval(s); writes an extended_metrics.csv sidecar",
+    )
+    metrics_p.add_argument("run_id", help="run_id (exact or unique suffix)")
+    metrics_p.add_argument(
+        "--n_cells", default=None,
+        help="comma-separated subsample sizes (default: the script's 30,50,80)",
+    )
+    metrics_p.set_defaults(func=_metrics_command)
+
+    handoff_p = sub.add_parser(
+        "handoff",
+        help="emit a handoff manifest (dataset + preprocessing + model spec) for the "
+        "downstream track",
+    )
+    handoff_p.add_argument("run_id", help="run_id (exact or unique suffix)")
+    handoff_p.add_argument(
+        "--out-dir", type=Path, default=None,
+        help="directory to write the manifest into (default: <workspace>/handoff)",
+    )
+    handoff_p.set_defaults(func=_handoff_command)
 
     args = parser.parse_args()
     return args.func(args)

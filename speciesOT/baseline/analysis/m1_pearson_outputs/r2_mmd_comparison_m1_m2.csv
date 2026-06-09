@@ -1,0 +1,9 @@
+line,setting,model,R2,MMD,mmd_floor,mmd_ceiling,gap_above_floor,frac_gap_closed,mean_JS,status
+M1,ood,IMPACT,0.9407,0.1375,0.0238,0.0896,0.1137,-0.7277,0.4653,ok
+M1,ood,scGen,0.9094,0.1677,0.0238,0.0896,0.1439,-1.1865,0.4901,ok
+M1,iid,IMPACT,,,,,,,,n/a — not trained
+M1,iid,scGen,,,,,,,,n/a — not trained
+M2,ood,IMPACT,0.9301,0.108,0.024,0.0862,0.084,-0.3507,0.4507,ok
+M2,ood,scGen,0.8916,0.1458,0.024,0.0862,0.1218,-0.9595,0.4736,ok
+M2,iid,IMPACT,0.9674,0.1207,0.024,0.0862,0.0967,-0.5551,0.4516,ok
+M2,iid,scGen,0.9364,0.1417,0.024,0.0862,0.1177,-0.8927,0.4664,ok

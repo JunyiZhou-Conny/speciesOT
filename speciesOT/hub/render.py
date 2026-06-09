@@ -58,6 +58,17 @@ def _eval_section(ev: EvalRecord) -> str:
         f"| n_cells present | {_fmt(ev.n_cells_present)} |",
         f"| R² (means) | {_fmt(ev.headline_r2_means)} |",
         f"| MMD | {_fmt(ev.headline_mmd)} |",
+    ]
+    # Extended metrics (only when the extended_metrics.csv sidecar exists)
+    if ev.headline_mmd_floor is not None or ev.headline_mmd_ceiling is not None:
+        lines += [
+            f"| MMD floor (best achievable) | {_fmt(ev.headline_mmd_floor)} |",
+            f"| MMD ceiling (identity gap) | {_fmt(ev.headline_mmd_ceiling)} |",
+            f"| fraction of gap closed | {_fmt(ev.frac_gap_closed)} |",
+        ]
+    if ev.headline_js is not None:
+        lines.append(f"| mean per-gene JS | {_fmt(ev.headline_js)} |")
+    lines += [
         f"| last run at | {_fmt(ev.last_run_at)} |",
         f"| imputed.h5ad | {_fmt(ev.imputed_h5ad_path)} |",
         f"| evals.csv | {_fmt(ev.evals_csv_path)} |",
@@ -314,6 +325,16 @@ def render_comparison(a: ModelRecord, b: ModelRecord) -> str:
                     f"| MMD | {_fmt(ea.headline_mmd)} | {_fmt(eb.headline_mmd)} | "
                     f"{_format_delta(ea.headline_mmd, eb.headline_mmd)} |"
                 )
+                if ea.frac_gap_closed is not None or eb.frac_gap_closed is not None:
+                    parts.append(
+                        f"| fraction of gap closed | {_fmt(ea.frac_gap_closed)} | {_fmt(eb.frac_gap_closed)} | "
+                        f"{_format_delta(ea.frac_gap_closed, eb.frac_gap_closed)} |"
+                    )
+                if ea.headline_js is not None or eb.headline_js is not None:
+                    parts.append(
+                        f"| mean per-gene JS | {_fmt(ea.headline_js)} | {_fmt(eb.headline_js)} | "
+                        f"{_format_delta(ea.headline_js, eb.headline_js)} |"
+                    )
                 parts.append(
                     f"| n_cells present | {_fmt(ea.n_cells_present)} | {_fmt(eb.n_cells_present)} | — |"
                 )

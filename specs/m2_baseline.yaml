@@ -1,7 +1,7 @@
-experiment_tag: hvg_pearson_residuals_m2_ood
+experiment_tag: hvg_pearson_residuals_m2_v08_ood
 derived_from: gpu/hvg_pearson_residuals_m2_ood/impact_cellot
 data_source: speciesot-human-mouse-hvg
-data_file: datasets/speciesot-human-mouse-hvg/hvg_pearson_residuals_m2_v07.h5ad
+data_file: datasets/speciesot-human-mouse-hvg/hvg_pearson_residuals_m2_v08.h5ad
 source_datasets:
   mouse: /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_muris/sampled_mouse_shared.h5ad
   human: /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_sapiens/sampled_human_shared.h5ad
@@ -30,6 +30,7 @@ datasplit_strategy: toggle_ood
 mode: ood
 test_size: 0.2
 random_state: 0
+datasplit_stratify: condition
 scgen_hidden_units:
 - 256
 - 256
@@ -47,5 +48,8 @@ impact_lr: 0.0001
 impact_batch_size: 128
 impact_n_iters: 50000
 impact_n_inner_iters: 10
+impact_train_device: cpu
 data_space_n_cells: 30,50,80
-notes: ''
+notes: v08 rebuild of M2 (monocyte holdout CL:0000875 + CL:0000576). Now ENFORCES
+  the assay filter (mouse 10x v2 / human 10x v3, dropping Smart-seq2) and stratifies
+  the OOD split by species (condition). See conceptual_framework section 5.10 + 5.7.

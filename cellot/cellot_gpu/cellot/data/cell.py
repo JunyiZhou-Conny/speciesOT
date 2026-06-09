@@ -318,8 +318,8 @@ def split_cell_data_train_test_eval(
 
     return split
 
-
-def split_cell_data_toggle_ood(data, holdout, key, mode, random_state=0, **kwargs):
+def split_cell_data_toggle_ood(data, holdout, key, mode, random_state=0,
+                               stratify=None, **kwargs):
 
     """Hold out ood sample, coordinated with iid split
 
@@ -327,6 +327,13 @@ def split_cell_data_toggle_ood(data, holdout, key, mode, random_state=0, **kwarg
 
     for ood mode: hold out all cells from a sample
     for iid mode: include half of cells in split
+
+    If `stratify` names an obs column (e.g. "condition"), the 50/50 ignore/ood
+    split of the holdout pool is stratified on it so the OOD subset is balanced
+    across that variable. This fixes the species drift documented in
+    docs/conceptual_framework.md §5.7 (an unstratified split drifts e.g. to
+    219/207 instead of 213/213). Default None preserves the original unstratified
+    behaviour so existing configs/splits are unchanged.
     """
 
     split = split_cell_data_train_test(data, random_state=random_state, **kwargs)
@@ -337,7 +344,22 @@ def split_cell_data_toggle_ood(data, holdout, key, mode, random_state=0, **kwarg
         value = holdout
 
     ood = data.obs_names[data.obs[key].isin(value)]
-    trainobs, testobs = train_test_split(ood, random_state=random_state, test_size=0.5)
+
+    strat = None
+    if stratify is not None and stratify in data.obs.columns:
+        strat = data.obs.loc[ood, stratify].astype(str)
+        counts = strat.value_counts()
+        # sklearn stratify requires >=2 classes and >=2 members per class
+        if strat.nunique() < 2 or counts.min() < 2:
+            strat = None
+    try:
+        trainobs, testobs = train_test_split(
+            ood, random_state=random_state, test_size=0.5, stratify=strat
+        )
+    except ValueError:
+        trainobs, testobs = train_test_split(
+            ood, random_state=random_state, test_size=0.5
+        )
 
     if mode == "ood":
         split.loc[trainobs] = "ignore"

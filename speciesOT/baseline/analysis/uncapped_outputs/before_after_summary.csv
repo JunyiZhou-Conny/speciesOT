@@ -1,0 +1,8 @@
+stage,value
+mouse_capped_cells,47807
+mouse_capped_genes,18024
+human_capped_cells,58931
+human_capped_genes,61759
+mouse_uncapped_cells,356213
+human_uncapped_cells,1136218
+matched_pairs_uncapped,62443

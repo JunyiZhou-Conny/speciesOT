@@ -106,6 +106,32 @@ def headline_metrics(
     return mean_metric("r2-means"), mean_metric("mmd"), n_cells_values
 
 
+def read_extended_metrics(
+    eval_dir: Path,
+) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """Read the optional `extended_metrics.csv` sidecar (written by
+    scripts/extended_metrics.py / `./hub metrics`).
+
+    Returns (mmd_floor, mmd_ceiling, frac_gap_closed, mean_js) at the largest
+    ncells, or all-None if the sidecar is absent/unreadable.
+    """
+    p = eval_dir / "extended_metrics.csv"
+    if not p.exists():
+        return None, None, None, None
+    try:
+        df = pd.read_csv(p)
+    except (pd.errors.EmptyDataError, pd.errors.ParserError, OSError):
+        return None, None, None, None
+    if df.empty or "ncells" not in df.columns:
+        return None, None, None, None
+    row = df.loc[df["ncells"].idxmax()]
+
+    def g(key: str) -> Optional[float]:
+        return float(row[key]) if key in df.columns and pd.notna(row[key]) else None
+
+    return g("mmd_floor"), g("mmd_ceiling"), g("frac_gap_closed"), g("mean_js")
+
+
 def mtime(path: Path) -> Optional[datetime]:
     """File mtime as datetime, or None if path doesn't exist."""
     if not path.exists():

@@ -1,0 +1,45 @@
+cell_type,capped_n,uncapped_n,delta_uncapped_minus_capped
+B cell,406,38292,37886
+hepatocyte,0,8182,8182
+macrophage,204,7702,7498
+endothelial cell,406,7300,6894
+natural killer cell,912,6076,5164
+luminal epithelial cell of mammary gland,0,5342,5342
+monocyte,166,4212,4046
+fibroblast,76,3788,3712
+basal cell,0,3638,3638
+intermediate monocyte,1008,3522,2514
+hematopoietic precursor cell,1584,3440,1856
+classical monocyte,182,3138,2956
+"CD8-positive, alpha-beta T cell",390,2996,2606
+"CD4-positive, alpha-beta T cell",192,2812,2620
+mature NK T cell,0,2736,2736
+plasma cell,414,2652,2238
+mesenchymal stem cell of adipose tissue,0,2204,2204
+enterocyte of epithelium of large intestine,0,1796,1796
+hematopoietic stem cell,1584,1584,0
+T cell,204,1572,1368
+granulocyte,0,1348,1348
+large intestine goblet cell,760,1192,432
+adventitial cell,0,1162,1162
+smooth muscle cell,54,1078,1024
+non-classical monocyte,852,1054,202
+vein endothelial cell,574,944,370
+fibroblast of cardiac tissue,484,932,448
+thymocyte,910,910,0
+neutrophil,28,802,774
+pulmonary alveolar type 2 cell,584,584,0
+bronchial smooth muscle cell,440,440,0
+basophil,286,306,20
+endothelial cell of lymphatic vessel,0,280,280
+pericyte,134,198,64
+regular atrial cardiac myocyte,26,152,126
+mucus secreting cell,0,146,146
+hepatic stellate cell,0,78,78
+club cell,0,74,74
+myeloid dendritic cell,66,66,0
+erythrocyte,2,54,52
+plasmacytoid dendritic cell,54,54,0
+multiciliated columnar cell of tracheobronchial tree,0,36,36
+pulmonary alveolar type 1 cell,8,8,0
+mast cell,0,4,4

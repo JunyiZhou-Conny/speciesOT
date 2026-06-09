@@ -97,6 +97,7 @@ def patch_scgen_shift(config, model):
 
 
 def load_projectors(aedir, embedding, where):
+    # when embedding is None, encode and decode are just identity functions
     if embedding is None:
 
         def encode(df):
@@ -269,8 +270,25 @@ def grab_treated_cells_for_random_model(config, setting):
 
     return treated, imputed
 
-
+# This is the fucntion that outputs control, treated, and imputed
 def load_conditions(expdir, where, setting, embedding=None):
+    # why this part exists
+    # this part checks if there exists a model-cellot directory
+#     experiments/perturbation_X/
+# ├── model-cellot/        ← THE primary model (the OT transport map)
+# │   ├── config.yaml
+# │   └── cache/model.pt
+# ├── model-scgen/         ← AE used by cellot for its latent space
+# │   ├── config.yaml
+# │   └── cache/model.pt
+# ├── scgen/               ← scGen baseline (separate from the AE)
+# ├── identity/            ← identity baseline
+# ├── random/              ← random baseline
+# └── average/             ← average baseline
+
+# the purpose is fairness n baseline comparison
+# when model-cellot exists read its embedding context to see if it is latent-space or data-space
+# and then for the baseline model, we use the same embedding context
     if embedding is None and (expdir.parent / "model-cellot" / "config.yaml").exists():
         embedding = read_embedding_context(
             load_config(expdir.parent / "model-cellot" / "config.yaml")
@@ -278,6 +296,8 @@ def load_conditions(expdir, where, setting, embedding=None):
 
     assert embedding in {None, "pca", "ae"}
 
+    # load_projectors is the function that define encode and decode functions
+    # when the embedding is None, encode and decode are just identity functions
     encode, decode = load_projectors(expdir.parent / "model-scgen", embedding, where)
 
     config = load_config(expdir / "config.yaml")

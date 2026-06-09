@@ -38,6 +38,12 @@ class EvalRecord:
     headline_mmd: Optional[float]
     n_cells_present: list[int]
     last_run_at: Optional[datetime]
+    # Extended metrics from the optional extended_metrics.csv sidecar
+    # (see scripts/extended_metrics.py + `./hub metrics`). None when not computed.
+    headline_mmd_floor: Optional[float] = None
+    headline_mmd_ceiling: Optional[float] = None
+    frac_gap_closed: Optional[float] = None
+    headline_js: Optional[float] = None
 
 
 @dataclass

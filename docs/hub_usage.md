@@ -168,13 +168,16 @@ cp specs/m2_baseline.yaml specs/m1_modern.yaml
 ### Spec file structure
 
 ```yaml
-experiment_tag: hvg_pearson_residuals_m1_ood
+experiment_tag: hvg_pearson_residuals_m1_v08_ood
 derived_from: gpu/hvg_pearson_residuals_m2_ood/impact_cellot  # lineage; informational
 data_source: speciesot-human-mouse-hvg
-data_file: datasets/speciesot-human-mouse-hvg/hvg_pearson_residuals_m1_v07.h5ad
+data_file: datasets/speciesot-human-mouse-hvg/hvg_pearson_residuals_m1_v08.h5ad
+assay_filter:                       # ENFORCED by ./hub prep (single platform/species)
+  mouse: [chromium_v2]              # = 10x 3' v2 (drops Smart-seq2 etc.)
+  human: [chromium_v3]              # = 10x 3' v3
 hvg_method: pearson_residuals
 hvg_input_layer: layers['counts']
-log1p_applied: false
+log1p_applied: true                 # .X is always log-normalized (01.5 contract)
 hvg_batch_key: species
 condition_column: condition
 source: mouse
@@ -182,13 +185,15 @@ target: human
 holdout_cell_types: [CL:0000875]
 datasplit_strategy: toggle_ood
 mode: ood
+datasplit_stratify: condition       # balance the OOD split by species (else it drifts)
 scgen_hidden_units: [256, 256]
 scgen_latent_dim: 50
 scgen_lr: 0.001
+impact_train_device: gpu            # "gpu" (V100-pinned) or "cpu"
 # ... (full list in speciesOT/hub/spec.py:ExperimentSpec)
 ```
 
-All fields except `experiment_tag` and `data_file` have defaults matching the existing matrix conventions. Override only what's different.
+All fields except `experiment_tag` and `data_file` have defaults matching the existing matrix conventions. Override only what's different. Note the two treatments differ in their defaults: **`assay_filter` defaults to the values shown** (mouse `chromium_v2` / human `chromium_v3`), so even a minimal spec gets single-platform filtering; **`datasplit_stratify` defaults to `null`** (the original unstratified split, kept for backward-compatibility with the existing matrix) — set it to `condition` to balance the OOD split by species.
 
 ### What `./hub generate` writes
 
@@ -211,6 +216,56 @@ Existing files are skipped by default. Pass `--force` to overwrite.
 ### Why the hub doesn't auto-submit
 
 The hub deliberately stops at file-writing. Actually running `sbatch` is left manual. The `generate` command prints the recommended chain so you can copy-paste, but you decide when to launch.
+
+## Data preparation (v2) — `./hub prep`
+
+`./hub prep <spec.yaml>` materializes the training `.h5ad` named by the spec's `data_file`, using the same spec the v1 generator consumes. It is a faithful port of `speciesOT/baseline/analysis/01.5_data_prep_all_holdouts_hvg_flavors.ipynb` (§1–§7), so you no longer have to open the notebook, edit the `GROUPS` dict, and run-all.
+
+```bash
+./hub prep specs/m1_modern.yaml             # build the .h5ad named in the spec
+./hub prep specs/m1_modern.yaml --force     # overwrite if it already exists
+./hub prep specs/m1_modern.yaml --keep-intermediate   # keep the pre-round-trip temp file
+```
+
+### What it does, step by step
+
+Reading the spec's preprocessing-intent fields (`source_datasets`, `assay_filter`, `ortholog_source`, `hvg_method`, `hvg_n_top`, `hvg_batch_key`, `holdout_cell_types`, `random_state`, `data_file`):
+
+1. Loads `source_datasets.{mouse,human}` and **promotes `.raw` to `.X`** to recover integer UMI counts.
+2. **Enforces the assay filter** (`assay_filter`, added 2026-06-05): keeps only the allowed sequencing platform per species — default mouse `10x 3' v2`, human `10x 3' v3` — and drops everything else, **critically Smart-seq2**. The atlas sources mix platforms, and the Smart-seq2 minority has a very different expression distribution that otherwise shows up as OOD "scatter" and inflates MMD (see `docs/conceptual_framework.md` §5.10 and notebook 21). This is an **enforced treatment**, not optional metadata; an empty `assay_filter` skips it with a loud warning. Tokens accept the `chromium_v{2,3}` aliases, the literal `10x 3' v{2,3}` strings, or the EFO ids (`EFO:0009899` / `EFO:0009922`). Implemented in `speciesOT/hub/prep.py:_apply_assay_filter`.
+3. **Ortholog-aligns** mouse↔human onto a shared one-to-one axis. Uses the cached BioMart table at `scripts/.biomart_ortholog_cache.csv` if present (the slow path queries Ensembl live and writes the cache for next time).
+4. **Matches cells by `(cell_type_ontology_term_id, tissue_ontology_term_id)`** with the spec's `random_state`. With the assay filter on, the atlas yields ~8,054 paired cells (4,027 per species); the pre-filter v07 cut was ~12,990 (6,495 per species).
+5. Snapshots raw counts to `.layers['counts']`, then sets `.X = log1p(normalize_total(counts, 1e4))`.
+6. Selects the top `hvg_n_top` HVG with `hvg_method` on the **train-eligible (non-holdout) cells**, dispatching the input layer per flavor (raw counts for `seurat_v3`/`seurat_v3_paper`/`pearson_residuals`, log-norm `.X` for `seurat`/`cell_ranger`).
+7. Subsets to those HVG (**keeping** the holdout cells — `toggle_ood` splits them at train time), strips everything but `.X`/`.obs`, writes the file, and round-trips it through the CellOT env's anndata 0.7 for downstream compatibility.
+8. Reads the result back and prints a verification panel (shape, `.X` range, obs columns, `condition` balance).
+
+### Two conda envs
+
+The prep needs `scanpy >= 1.12` (Pearson residuals, `seurat_v3_paper`), which lives in the **`analysis`** env — not the `CellOT` env the rest of the hub runs in. So `./hub prep` shells out: the CLI (CellOT env) invokes `python -m speciesOT.hub.prep` under the analysis interpreter, which in turn shells back to the CellOT interpreter for the final anndata-0.7 round-trip. Both interpreters are auto-detected; override them with `SPECIESOT_ANALYSIS_PY` and `SPECIESOT_CELLOT_PY` if your paths differ. You can also run it directly:
+
+```bash
+conda activate analysis
+python -m speciesOT.hub.prep specs/m1_modern.yaml
+```
+
+### Notes
+
+- **Refuses to overwrite** an existing `.h5ad` unless `--force` is passed (big files = big mistakes).
+- **Fails loudly** if the `source_datasets` files are missing — they live in Josh's `data/` tree, not this repo.
+- **Assay filter is enforced** (`assay_filter`): only the listed platform(s) per species survive (default mouse `10x 3' v2` / human `10x 3' v3`); Smart-seq2 and other platforms are dropped *before* ortholog matching and HVG. This was previously recorded-but-never-applied; it is now applied in prep, so any dataset built by `./hub prep` is single-platform per species. If the filter would remove all cells (e.g. a typo'd token), prep aborts with the source's actual assay values listed. See `conceptual_framework.md` §5.10.
+- `.X` is **always** log-normalized regardless of `hvg_method`; this is the fixed 01.5 contract that scGen/IMPACT depend on. A spec that sets `log1p_applied: false` contradicts that contract — prep warns and log-normalizes anyway so the output matches what 01.5 would have produced.
+
+### The full one-command experiment flow
+
+```bash
+# Edit a spec to taste, then:
+./hub prep specs/m1_modern.yaml       # v2 — build the dataset
+./hub generate specs/m1_modern.yaml   # v1 — write configs + sbatches
+# copy-paste the printed sbatch chain to submit
+# wait for training + evals
+./hub list / show / compare           # inspect results
+```
 
 ## What's still planned
 
