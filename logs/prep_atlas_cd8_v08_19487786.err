@@ -1,9 +1,0 @@
-Traceback (most recent call last):
-  File "<frozen runpy>", line 198, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/speciesOT/hub/prep.py", line 59, in <module>
-    from speciesOT.hub.spec import ExperimentSpec, load_spec_yaml  # noqa: E402
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/speciesOT/hub/spec.py", line 40, in <module>
-    import yaml
-ModuleNotFoundError: No module named 'yaml'
