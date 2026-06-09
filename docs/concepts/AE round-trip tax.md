@@ -32,11 +32,11 @@ apples-to-oranges comparison. Because the raw ceiling (~0.109) sits *below* the 
 
 Measure all three clouds in the *same* space:
 
-| reference | formula | m1 v08 |
-|---|---|---|
-| AE-recon floor | MMD(decode(encode(treated)), treated) | ~0.083 |
-| model | MMD(imputed, treated) | ~0.11–0.14 |
-| decoded-identity ceiling | MMD(decode(encode(control)), treated) | ~0.31 |
+| reference                | formula                                                     | m1 v08     |
+| ------------------------ | ----------------------------------------------------------- | ---------- |
+| AE-recon floor           | MMD(decode(encode(treated)), treated)                       | ~0.083     |
+| model                    | MMD(imputed = decode(encode(treated) + transport), treated) | ~0.11–0.14 |
+| decoded-identity ceiling | MMD(decode(encode(control)), treated)                       | ~0.31      |
 
 With these, m1 v08 IMPACT `frac_gap_closed ≈ 0.91`.
 
