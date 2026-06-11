@@ -1,3 +1,11 @@
+> **ARCHIVED 2026-06-09 — aspirational essay, not the system we use.** This is a
+> generic Karpathy-style blueprint for an LLM wiki (CLAUDE.md, `/wiki-lint`, L0–L4
+> folders). It was never built and is NOT a backlog. The one durable idea — a single
+> behavioral contract for agents — is already satisfied by the repo-root `AGENTS.md`
+> (the single source of truth). The actual system of record is the **hub**
+> (`speciesOT/hub/`); the Obsidian vault under `docs/` is an auto-generated read-only
+> view of it. Kept here for reference only.
+
 # **Architectural Blueprint for an LLM-Driven Machine Learning Experiment Tracking Wiki**
 
 ## **The Convergence of Knowledge Management and MLOps**

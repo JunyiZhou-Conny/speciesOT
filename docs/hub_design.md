@@ -44,7 +44,7 @@ speciesOT/                               ← workspace root
         └── cli.py                       ← entry point: `hub list`, `hub show <run_id>`, …
 ```
 
-After the hub is functional, the workspace-root `scripts/` becomes thin shims that wrap into the hub package — or disappears entirely. See the `REFACTOR_WALKTHROUGH` scratchpad's hub absorption roadmap.
+After the hub is functional, the workspace-root `scripts/` becomes thin shims that wrap into the hub package — or disappears entirely.
 
 ## 4. Data model
 
@@ -372,6 +372,5 @@ That's the unified experiment-creation flow we've been building toward.
 ## Cross-references
 
 - `docs/conceptual_framework.md` — model variants, naming conventions, alias history (§2.1), R²-vs-r footgun (§5.5).
-- `REFACTOR_WALKTHROUGH_2026-05-24.md` — the running scratchpad. See "Hub absorption roadmap" for the v0→v3 plan and "Per-model-variation deltas" + "One-model-to-many-sbatches" insights captured during the walkthrough.
 - `scripts/build_experiments_inventory.py` — the script v0 replaces. The `ALIAS_TABLE` (lines 120–139) and per-phase overrides (lines 193–198) are the irreplaceable parts that must port over.
 - `scripts/regenerate_hvg_flavor_run_matrix.py` — also replaced by v0's `export csv` / `export md`.

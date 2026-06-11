@@ -59,15 +59,24 @@ def _eval_section(ev: EvalRecord) -> str:
         f"| R² (means) | {_fmt(ev.headline_r2_means)} |",
         f"| MMD | {_fmt(ev.headline_mmd)} |",
     ]
-    # Extended metrics (only when the extended_metrics.csv sidecar exists)
+    # NORTH-STAR: decoded-frame metrics (AE-honest) — the headline for judging
+    # models. Only present when decoded_frame_metrics.csv exists. See §5.9.
+    if ev.frac_gap_closed_decoded is not None or ev.frac_r2_closed_decoded is not None:
+        lines += [
+            f"| **frac_gap_closed (decoded, north-star)** | {_fmt(ev.frac_gap_closed_decoded)} |",
+            f"| frac_r2_closed (decoded, guardrail) | {_fmt(ev.frac_r2_closed_decoded)} |",
+            f"| MMD AE-recon floor (decoded) | {_fmt(ev.mmd_ae_recon_floor)} |",
+            f"| MMD decoded ceiling (identity) | {_fmt(ev.mmd_decoded_ceiling)} |",
+        ]
+    # Raw-frame extended metrics (secondary — unreliable for IMPACT, see §5.9).
     if ev.headline_mmd_floor is not None or ev.headline_mmd_ceiling is not None:
         lines += [
-            f"| MMD floor (best achievable) | {_fmt(ev.headline_mmd_floor)} |",
-            f"| MMD ceiling (identity gap) | {_fmt(ev.headline_mmd_ceiling)} |",
-            f"| fraction of gap closed | {_fmt(ev.frac_gap_closed)} |",
+            f"| MMD floor, raw frame | {_fmt(ev.headline_mmd_floor)} |",
+            f"| MMD ceiling, raw frame | {_fmt(ev.headline_mmd_ceiling)} |",
+            f"| frac_gap_closed, raw frame (unreliable for IMPACT) | {_fmt(ev.frac_gap_closed)} |",
         ]
     if ev.headline_js is not None:
-        lines.append(f"| mean per-gene JS | {_fmt(ev.headline_js)} |")
+        lines.append(f"| mean per-gene JS (KL-style guardrail) | {_fmt(ev.headline_js)} |")
     lines += [
         f"| last run at | {_fmt(ev.last_run_at)} |",
         f"| imputed.h5ad | {_fmt(ev.imputed_h5ad_path)} |",
@@ -325,9 +334,23 @@ def render_comparison(a: ModelRecord, b: ModelRecord) -> str:
                     f"| MMD | {_fmt(ea.headline_mmd)} | {_fmt(eb.headline_mmd)} | "
                     f"{_format_delta(ea.headline_mmd, eb.headline_mmd)} |"
                 )
+                if (ea.frac_gap_closed_decoded is not None
+                        or eb.frac_gap_closed_decoded is not None):
+                    parts.append(
+                        f"| **frac_gap_closed (decoded, north-star)** | "
+                        f"{_fmt(ea.frac_gap_closed_decoded)} | {_fmt(eb.frac_gap_closed_decoded)} | "
+                        f"{_format_delta(ea.frac_gap_closed_decoded, eb.frac_gap_closed_decoded)} |"
+                    )
+                if (ea.frac_r2_closed_decoded is not None
+                        or eb.frac_r2_closed_decoded is not None):
+                    parts.append(
+                        f"| frac_r2_closed (decoded) | "
+                        f"{_fmt(ea.frac_r2_closed_decoded)} | {_fmt(eb.frac_r2_closed_decoded)} | "
+                        f"{_format_delta(ea.frac_r2_closed_decoded, eb.frac_r2_closed_decoded)} |"
+                    )
                 if ea.frac_gap_closed is not None or eb.frac_gap_closed is not None:
                     parts.append(
-                        f"| fraction of gap closed | {_fmt(ea.frac_gap_closed)} | {_fmt(eb.frac_gap_closed)} | "
+                        f"| frac_gap_closed (raw, unreliable) | {_fmt(ea.frac_gap_closed)} | {_fmt(eb.frac_gap_closed)} | "
                         f"{_format_delta(ea.frac_gap_closed, eb.frac_gap_closed)} |"
                     )
                 if ea.headline_js is not None or eb.headline_js is not None:
@@ -474,8 +497,8 @@ def export_md(records: list[ModelRecord], out_path: Path) -> Path:
         members = by_family[fam]
         lines.append(f"## {family_labels.get(fam, fam)} ({len(members)})")
         lines.append("")
-        lines.append("| run_id | hvg | holdout | mode | R² | MMD | status |")
-        lines.append("|---|---|---|---|---|---|---|")
+        lines.append("| run_id | hvg | holdout | mode | R² | MMD | frac_gap_closed (decoded) | status |")
+        lines.append("|---|---|---|---|---|---|---|---|")
         for r in members:
             hvg = r.hvg_method or "—"
             if r.holdout_cell_types:
@@ -493,6 +516,7 @@ def export_md(records: list[ModelRecord], out_path: Path) -> Path:
             # Headline metrics: prefer data_space
             r2_str = "—"
             mmd_str = "—"
+            fgc_dec_str = "—"
             if r.evals:
                 ds = [e for e in r.evals if e.space == "data_space"]
                 ev = (ds + r.evals)[0]
@@ -500,8 +524,10 @@ def export_md(records: list[ModelRecord], out_path: Path) -> Path:
                     r2_str = f"{ev.headline_r2_means:.3f}"
                 if ev.headline_mmd is not None:
                     mmd_str = f"{ev.headline_mmd:.3f}"
+                if ev.frac_gap_closed_decoded is not None:
+                    fgc_dec_str = f"{ev.frac_gap_closed_decoded:.3f}"
             lines.append(
-                f"| `{r.run_id}` | `{hvg}` | {holdout} | {mode} | {r2_str} | {mmd_str} | {r.status} |"
+                f"| `{r.run_id}` | `{hvg}` | {holdout} | {mode} | {r2_str} | {mmd_str} | {fgc_dec_str} | {r.status} |"
             )
         lines.append("")
 

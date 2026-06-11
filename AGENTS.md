@@ -1,18 +1,93 @@
-# AGENTS.md — read this first
+# AGENTS.md — read this first (single source of truth for agents)
 
-This is the **speciesOT** cross-species single-cell OT project (predict human cells from mouse via IMPACT_CellOT + scGen).
-
-## Start here
-**Read [`docs/agent_handoff_2026-06-05.md`](docs/agent_handoff_2026-06-05.md) top to bottom** — it's the full onboarding (what the project is, how to read the repo, environments, the metric framework, current status, and in-flight work). Then skim [`docs/hub_usage.md`](docs/hub_usage.md) and [`docs/conceptual_framework.md`](docs/conceptual_framework.md) (§5.5–§5.10).
+This is the **speciesOT** cross-species single-cell optimal-transport project: predict
+human cells from mouse cells (species transport) via **IMPACT_CellOT** (CellOT/ICNN-OT
+in a shared scGen autoencoder latent space), with **scGen** as the baseline. Eventual
+goal: compose a species transport with a drug-effect transport (BCG line) to predict
+human-treated cells. This file is self-contained — you do not need any other doc to
+start. Deeper context is linked where useful.
 
 ## Hard rules (do not violate)
-- **Never `git commit` or `git push` unless the user explicitly asks.** All current work is uncommitted on `main`; the `josh` remote is diverged — never force-push.
-- **Everything routes through `./hub`** (CLI in `speciesOT/hub/`): `list`, `show`, `compare`, `prep`, `generate`, `metrics`, `handoff`. The hub never auto-submits sbatches — it prints the chain; the human (or you, only when asked) submits.
-- **Two conda envs:** `CellOT` (torch 1.11, the hub/train/eval) and `analysis` (scanpy ≥1.12, for `./hub prep` HVG + notebooks). `cellot` is not pip-installed — set `PYTHONPATH=<repo>/cellot/cellot_gpu` to import it.
-- **GPU jobs must pin V100** (`--constraint=v100`); the env's torch only supports ≤ sm_70. CPU is the safe fallback (`impact_train_device: cpu`).
-- **Don't full-load the 43GB `tabula_*_all.h5ad` atlas** — use the backed prep path (`speciesOT/hub/prep_backed.py`, `source_backed: true`) as a high-mem batch job.
-- **Judge models by `gap_above_floor` / `frac_gap_closed`** (floor/ceiling-normalized), not raw R²/MMD. See conceptual_framework §5.9.
-- **`specs/*.yaml` are the source of truth.** `./hub spec dump` is lossy for "intent" fields (assay_filter, datasplit_stratify, device, ...) — clone the spec file instead of re-dumping when those matter.
+- **Never `git commit` or `git push` unless the user explicitly asks.** Work lives
+  uncommitted on `main`; the `josh` remote (mentor's repo) is diverged — never force-push.
+- **Everything routes through `./hub`** (CLI in [`speciesOT/hub/`](speciesOT/hub/)):
+  `list`, `scorecard`, `show`, `compare`, `prep`, `generate`, `metrics`, `handoff`,
+  `vault`, `card`. The hub **never auto-submits** sbatches — it prints the chain; the
+  human (or you, only when asked) submits. The safety boundary is at submission.
+- **Two conda envs.** `CellOT` (torch 1.11; runs the hub, training, eval) and `analysis`
+  (scanpy ≥1.12; for `./hub prep` HVG + notebooks). `cellot` is **not pip-installed** —
+  set `PYTHONPATH=<repo>/cellot/cellot_gpu` to import it. The `./hub` wrapper
+  auto-activates `CellOT`.
+- **GPU jobs must pin V100** (`#SBATCH --constraint=v100`); the env's torch only supports
+  compute capability ≤ sm_70. CPU is the safe fallback (`impact_train_device: cpu`).
+- **Don't full-load the 43 GB `tabula_*_all.h5ad` atlas** — use the backed prep path
+  ([`speciesOT/hub/prep_backed.py`](speciesOT/hub/prep_backed.py), `source_backed: true`)
+  as a high-mem batch job, never on a login node.
+- **Judge models by the north-star, not raw R²/MMD** (see below).
+- **`specs/*.yaml` are the source of truth** for experiment intent. `./hub spec dump` is
+  lossy for intent fields (assay_filter, datasplit_stratify, device, …) — clone the spec
+  file instead of re-dumping when those matter.
 
-## Current focus (2026-06-05)
-v08 cleanup (enforced assay filter + stratified OOD split) done for m1/m2; an uncapped full-atlas CD8 rebuild is prepping (batch job `19449000`). Details + next actions in the handoff doc §7/§10.
+## The north-star metric (how we judge "are we improving?")
+- **One headline:** `frac_gap_closed_decoded` — fraction of the mouse→human MMD gap
+  closed, measured in the **AE-decoded frame** (apples-to-apples, where the model's
+  output actually lives). This is what `./hub scorecard` sorts on.
+- **Two guardrails:** `frac_r2_closed_decoded` (did the mean come out right?) and
+  `mean_js` (per-gene Jensen-Shannon ≈ symmetric KL — the metric to use when the
+  question is phrased in KL terms).
+- **Ignore raw `frac_gap_closed`** as a ranking metric — it mixes decoded-imputed vs
+  raw-treated and flips sign for measurement reasons (the "AE round-trip tax"). The hub
+  keeps it only as a diagnostic.
+- **The frozen benchmark:** model-version comparisons are made on the v08 OOD cuts
+  (`hvg_pearson_residuals_{m1,m2,a_uncapped}_v08_ood`) at fixed seed (`random_state=0`)
+  and fixed `ncells` (30/50/80, headline at 80). "Did this help?" is always answered on
+  these same cells via `./hub scorecard`.
+- Full rationale + the AE round-trip explanation: [`docs/conceptual_framework.md`](docs/conceptual_framework.md) §5.9.
+
+## One-command experiment flow
+```bash
+./hub prep specs/<spec>.yaml        # build the dataset .h5ad (analysis env, auto-shelled)
+./hub generate specs/<spec>.yaml    # write configs + sbatches; prints the submit chain
+# copy-paste the printed sbatch chain to submit (afterok deps are wired)
+# after training + eval finish:
+./hub metrics <run_id>              # compute raw + decoded metric sidecars
+./hub scorecard                     # the leaderboard, ranked by the north-star
+```
+
+## Where things live (the map)
+- `speciesOT/hub/` — the hub package (the system of record). `cli.py` → `discover.py` →
+  `catalog.py` → `readers.py` → `resolve.py` → `render.py`/`vault.py` → `spec.py`/`prep.py`.
+- `specs/*.yaml` — declarative experiment specs (intent source of truth).
+- `cellot/cellot_gpu/results/` and `speciesOT/baseline/results/` — trained models on
+  disk (the two discovery roots).
+- `cellot/cellot_gpu/scripts/` — `extended_metrics.py` (raw frame), `decoded_frame_metrics.py`
+  (AE-honest north-star), `dump_eval_clouds.py`.
+- `docs/conceptual_framework.md` — the science/metric source of truth.
+- `docs/hub_usage.md` — operational CLI reference.
+- `logs/research_logs/*.txt` — dated scratch notes (NOT canonical; promote to docs/ when stable).
+- `docs/` is also an Obsidian vault: it is an **auto-generated read-only view** of the hub
+  (regenerated by `./hub vault`). Do not treat unwritten concept notes as a backlog.
+
+## Precedence ladder (when guidance conflicts, higher wins)
+1. **Running code behavior** (the hub modules) — implementation truth.
+2. **This `AGENTS.md`** — repo-wide hard rules.
+3. **`docs/conceptual_framework.md`** — scientific / metric definitions.
+4. **`docs/hub_usage.md`** + `docs/maps/Hub Operations MOC.md` — operational workflow.
+5. Everything else (`docs/concepts/`, `docs/experiments/`, research logs, `docs/_archive/`)
+   is a view, a distillation, or scratch — never authoritative over the above.
+
+## Definition of done (for agents working here)
+- New analysis scripts go in `scripts/` or `cellot/cellot_gpu/scripts/`; new metrics flow
+  through the **sidecar** pattern (a CSV beside `evals.csv` that `readers.py` picks up) —
+  do not edit upstream `evaluate.py` to add metrics.
+- If you change behavior, **update the one canonical doc** that owns it (this file for
+  rules, `conceptual_framework.md` for science, `hub_usage.md` for commands). Do not
+  create new top-level docs or a new tracking/knowledge system.
+- Don't hand-edit `docs/experiments/*` (auto-generated by `./hub vault`).
+- Prefer archiving (`git mv` to a `_archive/` subfolder) over `rm` for tracked files.
+
+## Current focus
+See the latest `logs/research_logs/research_log_*.txt` for what's actively in flight
+(this pointer never goes stale). As of the 2026-06-09 consolidation: the decoded
+north-star is wired into the hub; v08 cuts (m1/m2/a_uncapped) are the frozen benchmark;
+next science is the uncapped-data and data-quality questions, judged via `./hub scorecard`.

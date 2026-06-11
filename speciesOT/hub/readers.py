@@ -132,6 +132,43 @@ def read_extended_metrics(
     return g("mmd_floor"), g("mmd_ceiling"), g("frac_gap_closed"), g("mean_js")
 
 
+def read_decoded_metrics(
+    eval_dir: Path,
+) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """Read the optional `decoded_frame_metrics.csv` sidecar (written by
+    scripts/decoded_frame_metrics.py / `./hub metrics`).
+
+    This is the AE-honest reference frame (all clouds round-tripped through the
+    scGen AE), so its `frac_gap_closed_decoded` is the project's headline metric
+    for IMPACT_CellOT runs (the raw `extended_metrics.csv` frac_gap_closed mixes
+    decoded-imputed vs raw-treated and is unreliable for IMPACT; see
+    docs/conceptual_framework.md §5.9).
+
+    Returns (frac_gap_closed_decoded, frac_r2_closed_decoded, mmd_ae_recon_floor,
+    mmd_decoded_ceiling) at the largest ncells, or all-None if absent/unreadable.
+    """
+    p = eval_dir / "decoded_frame_metrics.csv"
+    if not p.exists():
+        return None, None, None, None
+    try:
+        df = pd.read_csv(p)
+    except (pd.errors.EmptyDataError, pd.errors.ParserError, OSError):
+        return None, None, None, None
+    if df.empty or "ncells" not in df.columns:
+        return None, None, None, None
+    row = df.loc[df["ncells"].idxmax()]
+
+    def g(key: str) -> Optional[float]:
+        return float(row[key]) if key in df.columns and pd.notna(row[key]) else None
+
+    return (
+        g("frac_gap_closed_decoded"),
+        g("frac_r2_closed_decoded"),
+        g("mmd_ae_recon_floor"),
+        g("mmd_decoded_ceiling"),
+    )
+
+
 def mtime(path: Path) -> Optional[datetime]:
     """File mtime as datetime, or None if path doesn't exist."""
     if not path.exists():

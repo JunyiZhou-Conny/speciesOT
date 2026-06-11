@@ -34,7 +34,7 @@ The hub walks two roots:
 - `cellot/cellot_gpu/results/` (main active tree)
 - `speciesOT/baseline/results/` (frozen historical from speciesot_v1 era)
 
-It catalogs every directory that contains a `config.yaml`. As of 2026-05-28 that's **175 models** across four families.
+It catalogs every directory that contains a `config.yaml` (180+ models across four families; run `./hub list | tail -1` for the live count).
 
 ### The 4 model families
 
@@ -95,7 +95,7 @@ Output sections: identity, data provenance, framing, holdout, architecture, line
 
 ```bash
 ./hub card <run_id>             # writes one card to docs/model_cards/
-./hub card --all                # writes 175 cards + an INDEX.md grouped by family
+./hub card --all                # writes one card per model + an INDEX.md grouped by family
 ```
 
 Open `docs/model_cards/INDEX.md` in Cursor's preview pane (Cmd-Shift-V) for a clickable browseable view. Each model card has full tables for data provenance, framing, holdout, architecture, lineage, plus inline diagnostic figures (see below) and per-eval R²/MMD with true (squared) values.

@@ -8,7 +8,7 @@ tags:
 # `./hub list`
 
 The catalog browser. Walks `cellot/cellot_gpu/results/` + `speciesOT/baseline/results/`,
-catalogs every dir with a `config.yaml` (≈175 runs across 4 families), and prints a
+catalogs every dir with a `config.yaml` (180+ runs across 4 families), and prints a
 filterable/sortable table.
 
 ```bash

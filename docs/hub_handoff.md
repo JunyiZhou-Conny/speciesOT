@@ -1,14 +1,14 @@
 # Hub handoff doc — for a fresh agent
 
-Last updated: 2026-05-29. Status: **v1.1 shipped, v2 (hub prep) is the highest-priority next milestone.**
+Last updated: 2026-06-09. Status: **v2 shipped (`prep`, `metrics`, `handoff`, `vault`); the decoded-frame north-star metric + `./hub scorecard` shipped in the 2026-06-09 consolidation.** This doc is now secondary — the canonical agent entry point is [`AGENTS.md`](../AGENTS.md). Read that first.
 
 Read this in order:
 
-1. This doc, top to bottom (you're here)
-2. `docs/hub_design.md` (the architecture + extensibility recipe)
-3. `docs/hub_usage.md` (user-facing command reference)
-4. `docs/conceptual_framework.md` (model variants, naming history, eval bug etc.)
-5. `REFACTOR_WALKTHROUGH_2026-05-24.md` (history of repo decisions — only if you need archaeological context)
+1. [`AGENTS.md`](../AGENTS.md) — the single source of truth (hard rules, north-star, where things live)
+2. This doc, for hub architecture + history
+3. `docs/hub_design.md` (the architecture + extensibility recipe)
+4. `docs/hub_usage.md` (user-facing command reference)
+5. `docs/conceptual_framework.md` (model variants, naming history, eval bug, metric framework §5.9)
 
 Then look at:
 
@@ -25,7 +25,7 @@ Conceptual depth: `docs/conceptual_framework.md`. Two sections to read first for
 
 ## 2. What the hub is
 
-A Python package at `speciesOT/hub/` that catalogs every trained model in the project (currently 177), generates markdown model cards with diagnostic figures, supports declarative experiment specs (clone an existing model's setup, modify a field, generate configs + sbatches), and exports the catalog to CSV/MD. Replaces a constellation of older one-off scripts (`build_experiments_inventory.py`, `regenerate_hvg_flavor_run_matrix.py`, `generate_hvg_flavor_configs.py`, and others).
+A Python package at `speciesOT/hub/` that catalogs every trained model in the project (180+; run `./hub list | tail -1` for the live count), generates markdown model cards with diagnostic figures, supports declarative experiment specs (clone an existing model's setup, modify a field, generate configs + sbatches), and exports the catalog to CSV/MD. Replaces a constellation of older one-off scripts (`build_experiments_inventory.py`, `regenerate_hvg_flavor_run_matrix.py`, `generate_hvg_flavor_configs.py`, and others).
 
 Architecture: `docs/hub_design.md`. User commands: `docs/hub_usage.md`.
 
@@ -45,11 +45,14 @@ The `./hub` wrapper at workspace root auto-activates the `CellOT` conda env and 
 | `774f626` | v1 | Spec system: `./hub spec dump`, `./hub generate`. |
 | `2055129` | v1.1 | Extended spec with preprocessing-intent fields; sibling-aware dump; corrected `log1p_applied`; extensibility recipe doc. |
 
-The full hub today is ~1700 LOC across 8 modules in `speciesOT/hub/`. None of those modules import from the other `speciesOT/baseline/` or `scripts/` code — clean separation.
+The full hub today is ~4,500 LOC across 12 modules in `speciesOT/hub/`. None of those modules import from the other `speciesOT/baseline/` or `scripts/` code — clean separation.
 
-## 4. THE NEXT MILESTONE — v2 hub prep
+## 4. v2 hub prep — SHIPPED (historical design notes below)
 
-**This is what to build next.** Junyi explicitly asked for it 2026-05-29.
+**STATUS: SHIPPED.** `./hub prep` (+ `prep_backed.py` for the 43 GB atlas), `./hub
+metrics`, `./hub handoff`, and `./hub vault` all exist and are documented in
+`docs/hub_usage.md`. The design notes below are kept for archaeology; they are no
+longer a to-do.
 
 ### The use case
 
@@ -216,15 +219,13 @@ There's a `josh` remote at `https://github.com/JoshuaPrice/speciesOT.git` with ~
 
 ## 8. Open follow-ups (sorted by priority)
 
-1. **v2 — `./hub prep <spec.yaml>`** (highest priority; details in §4)
-2. Re-run the 80 standard `eval_dataspace` sbatches with `--embedding ae` to fix the §5.5 bug for the existing matrix. The hub generates correct ones for new cells, but the existing matrix still has the buggy outputs on disk. Mechanical: regenerate via `./hub spec dump` + `./hub generate --force` for each cell, then resubmit the data-space eval sbatch.
-3. Retire `scripts/build_experiments_inventory.py` and `scripts/regenerate_hvg_flavor_run_matrix.py` (replaced by `./hub export`). Pending the user diffing the new CSV against the old to confirm no rows lost.
-4. The walkthrough left some pending sign-offs from earlier batches:
-   - `git mv REFACTOR_PLAN_2026-05-05.md docs/refactor_plan_2026-05-05.md` (archive the original plan under docs/)
-   - `git rm HOW_TO_RUN_NEW_INPUT.txt` (workspace-root; keep the .md; the .txt is regenerable via pandoc)
-   - Update root `README.md` to point at the new `docs/` structure
-5. **v3 (eventually) — `./hub submit <spec.yaml>`**: actually launch the sbatch chain after confirming dependencies. Currently the chain is printed and user pastes. v3 would automate but should require a `--confirm` flag.
-6. **v2.5 (eventually) — `./hub figure-pack <run_id>`**: regenerate diagnostic UMAPs / biomarker plots from scratch for newly-trained models (the matcher in v0.5 only links existing figures; can't generate new ones).
+Done since this list was written: **v2 `./hub prep`** (shipped), **decoded-frame
+north-star + `./hub scorecard`** (shipped 2026-06-09). Remaining:
+
+1. Re-run the 80 standard `eval_dataspace` sbatches with `--embedding ae` to fix the §5.5 bug for the existing matrix. The hub generates correct ones for new cells, but the existing matrix still has the buggy outputs on disk. Mechanical: regenerate via `./hub spec dump` + `./hub generate --force` for each cell, then resubmit the data-space eval sbatch.
+2. Retire `scripts/build_experiments_inventory.py` and `scripts/regenerate_hvg_flavor_run_matrix.py` (replaced by `./hub export`). Pending the user diffing the new CSV against the old to confirm no rows lost.
+3. **`./hub figure-pack <run_id>`**: regenerate diagnostic transport UMAPs from scratch for newly-trained models (the v0.5 matcher only links existing figures). The recipe now exists at `scripts/make_transport_umaps.py` (+ `cellot/cellot_gpu/scripts/decoded_refs.py`); promoting it to a first-class hub command is the next hub feature. This is the mentor-facing "see the transport" deliverable.
+4. **`./hub submit <spec.yaml>`** (eventually): actually launch the sbatch chain after confirming dependencies (currently printed for copy-paste). Must require a `--confirm` flag.
 7. **Upgrade torch in the `CellOT` env for modern-GPU compatibility** (postponed 2026-06-02). The env ships `torch 1.11.0+cu102`, whose CUDA kernels only support compute capability ≤ sm_70. On `gpu_requeue`, jobs that land on A40/A100/A6000/H100 (sm_80+) die with `CUDA error: no kernel image is available for execution on the device`. Two mitigations now in place; the upgrade is the real fix:
    - The hub pins GPU training to V100 nodes via `#SBATCH --constraint=v100` (`spec.py:_GPU_CONSTRAINT`). Clear/relax this constant once torch is upgraded.
    - IMPACT_CellOT can now train on CPU via the spec field `impact_train_device: cpu` (renders a `shared`-partition sbatch with `--config.device cpu`). The model is small enough that CPU is a fine fallback when no compatible GPU is free. Default remains `gpu`.

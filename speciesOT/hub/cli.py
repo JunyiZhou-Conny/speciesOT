@@ -117,6 +117,7 @@ def _list_command(args: argparse.Namespace) -> int:
         ("holdout", 28),
         ("R^2", 6),
         ("MMD", 7),
+        ("fgc_dec", 8),
     ]
 
     header = "  ".join(f"{name:<{w}}" for name, w in cols)
@@ -140,8 +141,9 @@ def _list_command(args: argparse.Namespace) -> int:
         if eval_for_headline:
             r2 = _format_value(eval_for_headline.headline_r2_means)
             mmd = _format_value(eval_for_headline.headline_mmd)
+            fgc_dec = _format_value(eval_for_headline.frac_gap_closed_decoded)
         else:
-            r2, mmd = "—", "—"
+            r2, mmd, fgc_dec = "—", "—", "—"
 
         def _trunc(s: str, w: int) -> str:
             return (s[: w - 2] + "..") if len(s) > w else s
@@ -154,6 +156,7 @@ def _list_command(args: argparse.Namespace) -> int:
             (_trunc(holdout, 28), 28),
             (r2, 6),
             (mmd, 7),
+            (fgc_dec, 8),
         ]
         print("  ".join(f"{v:<{w}}" for v, w in row))
 
@@ -161,6 +164,104 @@ def _list_command(args: argparse.Namespace) -> int:
     print(
         f"[hub] {len(catalog)} models discovered across {len(catalog.walk_roots)} root(s)."
     )
+    return 0
+
+
+def _scorecard_command(args: argparse.Namespace) -> int:
+    """The single repo-wide leaderboard, sorted by the NORTH-STAR metric
+    (frac_gap_closed_decoded, AE-honest). Replaces eyeballing notebook 22 for the
+    headline ranking; notebook 22 stays for the deep-dive / figures.
+
+    By default shows only runs whose decoded sidecar has been computed
+    (`./hub metrics <run_id>`); pass --all to include every run with a data_space
+    eval (decoded column shows "—" where not yet computed).
+    """
+    catalog = build_catalog()
+
+    def headline_eval(rec):
+        ds = [e for e in rec.evals if e.space == "data_space"]
+        if not ds:
+            return None
+        # Prefer an eval that actually has the decoded north-star computed.
+        with_dec = [e for e in ds if e.frac_gap_closed_decoded is not None]
+        return (with_dec or ds)[0]
+
+    rows = []
+    for rec in catalog.records:
+        ev = headline_eval(rec)
+        if ev is None:
+            continue
+        if not args.all and ev.frac_gap_closed_decoded is None:
+            continue
+        if args.family and rec.family != args.family:
+            continue
+        rows.append((rec, ev))
+
+    # Sort by decoded frac_gap_closed desc; runs without it sink to the bottom.
+    rows.sort(
+        key=lambda re: (
+            re[1].frac_gap_closed_decoded if re[1].frac_gap_closed_decoded is not None else -1e9
+        ),
+        reverse=True,
+    )
+
+    if not rows:
+        print("[hub] no runs with a decoded scorecard yet. Run `./hub metrics <run_id>` "
+              "on a data_space eval, or pass --all to see raw-only runs.")
+        return 0
+
+    cols = [
+        ("run_id", 48),
+        ("family", 14),
+        ("mode", 5),
+        ("fgc_dec", 8),
+        ("fr2_dec", 8),
+        ("mean_js", 8),
+        ("fgc_raw", 8),
+        ("R^2", 6),
+        ("status", 12),
+    ]
+    lines = []
+    header = "  ".join(f"{name:<{w}}" for name, w in cols)
+    lines.append(header)
+    lines.append("-" * len(header))
+
+    def _trunc(s: str, w: int) -> str:
+        return (s[: w - 2] + "..") if len(s) > w else s
+
+    def _f(v):
+        return f"{v:.3f}" if isinstance(v, float) else "—"
+
+    for rec, ev in rows:
+        if rec.train_includes_holdout is True:
+            mode = "iid"
+        elif rec.train_includes_holdout is False:
+            mode = "ood"
+        else:
+            mode = "—"
+        row = [
+            (_trunc(rec.run_id, 48), 48),
+            (_trunc(rec.family, 14), 14),
+            (mode, 5),
+            (_f(ev.frac_gap_closed_decoded), 8),
+            (_f(ev.frac_r2_closed_decoded), 8),
+            (_f(ev.headline_js), 8),
+            (_f(ev.frac_gap_closed), 8),
+            (_f(ev.headline_r2_means), 6),
+            (_trunc(rec.status, 12), 12),
+        ]
+        lines.append("  ".join(f"{v:<{w}}" for v, w in row))
+
+    text = "\n".join(lines)
+    if args.out:
+        Path(args.out).write_text(text + "\n")
+        print(f"[hub] wrote scorecard to {args.out}")
+    else:
+        print(text)
+        print()
+        print("[hub] north-star = fgc_dec (frac_gap_closed_decoded, AE-honest). "
+              "fgc_raw is the raw-frame value (unreliable for IMPACT). "
+              "Run `./hub metrics <run_id>` to populate missing rows.")
     return 0
 
 
@@ -232,11 +333,15 @@ def _show_command(args: argparse.Namespace) -> int:
         print(f"    n_cells present   : {_format_value(ev.n_cells_present)}")
         print(f"    R^2 of means      : {_format_value(ev.headline_r2_means)}")
         print(f"    MMD               : {_format_value(ev.headline_mmd)}")
+        if ev.frac_gap_closed_decoded is not None or ev.frac_r2_closed_decoded is not None:
+            print(f"    frac_gap_closed (decoded, NORTH-STAR) : {_format_value(ev.frac_gap_closed_decoded)}")
+            print(f"    frac_r2_closed (decoded, guardrail)   : {_format_value(ev.frac_r2_closed_decoded)}")
+            print(f"    MMD ae-recon floor / decoded ceiling  : {_format_value(ev.mmd_ae_recon_floor)} / {_format_value(ev.mmd_decoded_ceiling)}")
         if ev.headline_mmd_floor is not None or ev.headline_mmd_ceiling is not None:
-            print(f"    MMD floor/ceiling : {_format_value(ev.headline_mmd_floor)} / {_format_value(ev.headline_mmd_ceiling)}")
-            print(f"    frac gap closed   : {_format_value(ev.frac_gap_closed)}")
+            print(f"    MMD floor/ceiling (raw frame)         : {_format_value(ev.headline_mmd_floor)} / {_format_value(ev.headline_mmd_ceiling)}")
+            print(f"    frac_gap_closed (raw, unreliable)     : {_format_value(ev.frac_gap_closed)}")
         if ev.headline_js is not None:
-            print(f"    mean per-gene JS  : {_format_value(ev.headline_js)}")
+            print(f"    mean per-gene JS (KL-style)           : {_format_value(ev.headline_js)}")
         print(f"    last run at       : {_format_value(ev.last_run_at)}")
         print(f"    imputed h5ad      : {_format_value(ev.imputed_h5ad_path)}")
 
@@ -384,24 +489,33 @@ def _metrics_command(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
 
-    script = CELLOT_DIR / "scripts" / "extended_metrics.py"
+    # Two sidecars are written per eval:
+    #   extended_metrics.py     -> extended_metrics.csv      (raw-frame + JS)
+    #   decoded_frame_metrics.py -> decoded_frame_metrics.csv (AE-honest north-star)
+    # The decoded frame is the headline for IMPACT_CellOT (see §5.9); run both so
+    # the catalog can surface frac_gap_closed_decoded everywhere.
+    scripts = [
+        CELLOT_DIR / "scripts" / "extended_metrics.py",
+        CELLOT_DIR / "scripts" / "decoded_frame_metrics.py",
+    ]
     env = dict(os.environ, PYTHONPATH=str(CELLOT_DIR))
     rc = 0
     for ev in data_space_evals:
-        cmd = [
-            sys.executable, str(script),
-            "--outdir", str(rec.model_dir),
-            "--setting", ev.setting or "ood",
-            "--where", "data_space",
-            "--embedding", "ae",
-            "--evalprefix", ev.eval_id,
-        ]
-        if args.n_cells:
-            cmd += ["--n_cells", args.n_cells]
-        print(f"[hub] metrics for {rec.run_id} [{ev.eval_id}]")
-        print(f"[hub] $ {' '.join(cmd)}")
-        proc = subprocess.run(cmd, cwd=str(CELLOT_DIR), env=env)
-        rc = rc or proc.returncode
+        for script in scripts:
+            cmd = [
+                sys.executable, str(script),
+                "--outdir", str(rec.model_dir),
+                "--setting", ev.setting or "ood",
+                "--where", "data_space",
+                "--embedding", "ae",
+                "--evalprefix", ev.eval_id,
+            ]
+            if args.n_cells:
+                cmd += ["--n_cells", args.n_cells]
+            print(f"[hub] metrics ({script.name}) for {rec.run_id} [{ev.eval_id}]")
+            print(f"[hub] $ {' '.join(cmd)}")
+            proc = subprocess.run(cmd, cwd=str(CELLOT_DIR), env=env)
+            rc = rc or proc.returncode
     return rc
 
 
@@ -462,9 +576,13 @@ def _handoff_command(args: argparse.Namespace) -> int:
             "eval_id": ev.eval_id,
             "r2_means": ev.headline_r2_means,
             "mmd": ev.headline_mmd,
-            "mmd_floor": ev.headline_mmd_floor,
-            "mmd_ceiling": ev.headline_mmd_ceiling,
-            "frac_gap_closed": ev.frac_gap_closed,
+            "frac_gap_closed_decoded": ev.frac_gap_closed_decoded,
+            "frac_r2_closed_decoded": ev.frac_r2_closed_decoded,
+            "mmd_ae_recon_floor": ev.mmd_ae_recon_floor,
+            "mmd_decoded_ceiling": ev.mmd_decoded_ceiling,
+            "mmd_floor_raw": ev.headline_mmd_floor,
+            "mmd_ceiling_raw": ev.headline_mmd_ceiling,
+            "frac_gap_closed_raw": ev.frac_gap_closed,
             "mean_js": ev.headline_js,
         })
 
@@ -686,6 +804,23 @@ def main() -> int:
     list_p.add_argument("--sort", help="field name to sort by")
     list_p.add_argument("--desc", action="store_true", help="sort descending")
     list_p.set_defaults(func=_list_command)
+
+    scorecard_p = sub.add_parser(
+        "scorecard",
+        help="the single leaderboard: all runs ranked by the north-star "
+        "(frac_gap_closed_decoded). The headline answer to 'are we improving?'",
+    )
+    scorecard_p.add_argument(
+        "--all", action="store_true",
+        help="include runs whose decoded metric isn't computed yet (default: only scored runs)",
+    )
+    scorecard_p.add_argument(
+        "--family", help="restrict to one family, e.g. --family impact_cellot",
+    )
+    scorecard_p.add_argument(
+        "--out", help="write the table to a file instead of stdout",
+    )
+    scorecard_p.set_defaults(func=_scorecard_command)
 
     show_p = sub.add_parser("show", help="show full detail for a single model")
     show_p.add_argument(

@@ -5,22 +5,27 @@ tags:
   - system
 ---
 
-# Vault contract (read me first, agent)
+# Vault contract (note-writing rules only)
 
-Behavioral rules for any AI agent (Cursor, or Claude Code if ever added) working **inside
-this vault** (`docs/`). This is the knowledge-management counterpart to the repo-root
-`AGENTS.md` (which governs the *code/hub*). When the two conflict, `AGENTS.md` wins for
-code, this file wins for notes.
+> **The vault (`docs/`) is an AUTO-GENERATED, read-only VIEW of the hub — not a separate
+> system you owe work to.** The hub is the source of truth (see repo-root
+> [`AGENTS.md`](../../AGENTS.md), which is the single agent entry point and outranks this
+> file). Concept notes here are **optional and opportunistic**: write one only when you
+> genuinely distill an insight worth linking. Unwritten/greyed-out concept notes are NOT
+> a backlog — do not treat them as debt. There is no obligation to build out the
+> Karpathy-style L0–L4 wiki hierarchy (that essay is archived under `docs/_archive/`).
+
+This file governs only the *style* of notes if and when you write them. For everything
+else — rules, the north-star metric, where things live — read `AGENTS.md`.
 
 ## Ground truth
 
-- **The local vault is the source of truth.** Ground every summary, link, and claim in
-  notes/docs actually present here (and the code in the repo). **Do not web-search to
-  fill knowledge gaps** about this project — if something isn't documented, say so and
-  propose writing the note, don't invent it.
+- **The hub + `AGENTS.md` + `conceptual_framework.md` are the source of truth.** This
+  vault re-presents the hub's catalog. Ground every claim in code/docs actually present;
+  **do not web-search** to fill project knowledge gaps — say so and propose a note instead.
 - The long-form prose docs (`conceptual_framework.md`, `hub_usage.md`, `hub_design.md`,
-  `hub_handoff.md`, the dated `agent_handoff_*.md`) are canonical. Concept notes
-  *distill and link* them; they don't replace them.
+  `hub_handoff.md`) are canonical. Concept notes *distill and link* them; they don't
+  replace them, and they are never required.
 
 ## Directory rules
 
@@ -57,5 +62,6 @@ code, this file wins for notes.
 
 - **Conservative deletes** — archive/relink over deleting a note someone might link to.
 - Don't move/rename auto-generated experiment notes; change the generator instead.
-- When you learn something during a code/analysis session, the *deliverable* often
-  includes a new or updated concept note. Leave the web denser than you found it.
+- Writing a concept note is **optional**, not a required deliverable. If an insight is
+  worth preserving, a note is a good home for it — but don't manufacture notes to "fill
+  the graph." A smaller, true graph beats a large aspirational one.

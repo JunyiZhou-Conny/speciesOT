@@ -223,10 +223,14 @@ def render_experiment_note(rec: ModelRecord, all_ids: "set[str]") -> str:
         props["eval_space"] = ev.space
         props["r2"] = ev.headline_r2_means
         props["mmd"] = ev.headline_mmd
+        # North-star (AE-honest) metrics first — these are what the MOC sorts on.
+        props["frac_gap_closed_decoded"] = ev.frac_gap_closed_decoded
+        props["frac_r2_closed_decoded"] = ev.frac_r2_closed_decoded
+        props["mean_js"] = ev.headline_js
+        # Raw-frame (secondary; unreliable for IMPACT — see §5.9).
         props["mmd_floor"] = ev.headline_mmd_floor
         props["mmd_ceiling"] = ev.headline_mmd_ceiling
-        props["frac_gap_closed"] = ev.frac_gap_closed
-        props["mean_js"] = ev.headline_js
+        props["frac_gap_closed_raw"] = ev.frac_gap_closed
     props["tags"] = _tags_for(rec)
 
     parts: list[str] = [_frontmatter_block(props), ""]
@@ -260,11 +264,14 @@ def render_experiment_note(rec: ModelRecord, all_ids: "set[str]") -> str:
         parts.append("|---|---|")
         parts.append(f"| R² (means, squared) | {_fmt_num(ev.headline_r2_means)} |")
         parts.append(f"| MMD | {_fmt_num(ev.headline_mmd)} |")
+        if ev.frac_gap_closed_decoded is not None or ev.frac_r2_closed_decoded is not None:
+            parts.append(f"| **frac_gap_closed (decoded, north-star)** | {_fmt_num(ev.frac_gap_closed_decoded)} |")
+            parts.append(f"| frac_r2_closed (decoded) | {_fmt_num(ev.frac_r2_closed_decoded)} |")
         if ev.headline_mmd_floor is not None or ev.headline_mmd_ceiling is not None:
-            parts.append(f"| MMD floor / ceiling | {_fmt_num(ev.headline_mmd_floor)} / {_fmt_num(ev.headline_mmd_ceiling)} |")
-            parts.append(f"| frac_gap_closed | {_fmt_num(ev.frac_gap_closed)} |")
+            parts.append(f"| MMD floor / ceiling (raw) | {_fmt_num(ev.headline_mmd_floor)} / {_fmt_num(ev.headline_mmd_ceiling)} |")
+            parts.append(f"| frac_gap_closed (raw, unreliable) | {_fmt_num(ev.frac_gap_closed)} |")
         if ev.headline_js is not None:
-            parts.append(f"| mean per-gene JS | {_fmt_num(ev.headline_js)} |")
+            parts.append(f"| mean per-gene JS (KL-style) | {_fmt_num(ev.headline_js)} |")
         parts.append(f"| n_cells present | {', '.join(map(str, ev.n_cells_present)) or '—'} |")
         parts.append("")
         if len(rec.evals) > 1:

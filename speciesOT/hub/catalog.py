@@ -1,6 +1,6 @@
 """Dataclasses for the hub's model catalog.
 
-Per the hub-design resolution log (REFACTOR_WALKTHROUGH_2026-05-24.md):
+Per the hub-design resolution log (docs/hub_design.md):
 - `project_phase` is NOT a single string; it's replaced by orthogonal
   structured fields (data_source, normalization, hvg_method, etc.).
 - 4 model families: scgen / impact_cellot / cellot_celltype / cellot_legacy.
@@ -40,10 +40,20 @@ class EvalRecord:
     last_run_at: Optional[datetime]
     # Extended metrics from the optional extended_metrics.csv sidecar
     # (see scripts/extended_metrics.py + `./hub metrics`). None when not computed.
+    # NOTE: frac_gap_closed here is the RAW-frame value (decoded-imputed vs
+    # raw-treated); it is unreliable for IMPACT_CellOT. Prefer the decoded fields
+    # below as the headline. See docs/conceptual_framework.md §5.9.
     headline_mmd_floor: Optional[float] = None
     headline_mmd_ceiling: Optional[float] = None
     frac_gap_closed: Optional[float] = None
     headline_js: Optional[float] = None
+    # Decoded-frame (AE-honest) metrics from decoded_frame_metrics.csv. These are
+    # the project NORTH-STAR: frac_gap_closed_decoded (distributional) +
+    # frac_r2_closed_decoded (mean-based guardrail). None when not computed.
+    frac_gap_closed_decoded: Optional[float] = None
+    frac_r2_closed_decoded: Optional[float] = None
+    mmd_ae_recon_floor: Optional[float] = None
+    mmd_decoded_ceiling: Optional[float] = None
 
 
 @dataclass

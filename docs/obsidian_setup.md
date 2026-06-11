@@ -77,7 +77,7 @@ The existing `josh` remote is your mentor's repo (`JoshuaPrice/speciesOT`) and i
   exemplify; the concept notes (`concepts/`) interlink into your spider-web.
 - In the graph's **Settings (gear)**: turn on **Groups** and add color groups by tag,
   e.g. `tag:#impact_cellot` (one color), `tag:#scgen` (another), `tag:#moc`. Now the
-  175 experiments cluster visually by family/flavor.
+  experiments cluster visually by family/flavor.
 - **Greyed-out nodes = "unresolved links"** — concept notes referenced but not written
   yet. That's your to-write list; it's a feature, not a bug.
 
@@ -216,7 +216,7 @@ git push
 | `00-system/` | the vault's behavioral contract + note templates | you / agent (rarely) |
 | `concepts/` | atomic, interlinked intuition notes — **the spider-web** | you + agent (hand-written) |
 | `hub/` | one note per `./hub` command — **the hub map** | you + agent |
-| `experiments/` | **auto-generated** graph nodes for all 175 runs (`./hub vault`) | the hub (don't hand-edit) |
+| `experiments/` | **auto-generated** graph nodes for every run (`./hub vault`) | the hub (don't hand-edit) |
 | `maps/` | Maps of Content (MOCs): the entry points into the graph | you + agent |
 | `conceptual_framework.md` etc. | the existing long-form prose (source of truth) | you + agent |
 | `model_cards/` | rich cards **(HPC-only, gitignored)** — figures, Cursor preview | the hub |

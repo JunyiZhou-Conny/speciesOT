@@ -12,7 +12,7 @@ A living reference doc. Written 2026-05-25 as part of a repo walkthrough; based 
   2. **CellOT (cell-type framing)** — source = non-CD8 cells, target = CD8 cells. Models a **cell-type effect**. *Tried briefly, abandoned.*
   3. **IMPACT_CellOT (current)** — source = mouse cells, target = human cells. Models a **species effect**.
 - **One baseline we compare against**: **scGen** (Lotfollahi et al.). A VAE with an additive perturbation vector. Simpler, often surprisingly competitive, but rests on a linear/additive assumption.
-- **What our pipeline currently models**: only the **species effect** (IMPACT_CellOT). We have not yet done the **drug-effect** half of the eventual project. The BCG line (notebook `16_*` and onward) is the first toe in that water; nothing thorough yet.
+- **What our pipeline currently models**: only the **species effect** (IMPACT_CellOT). We have not yet done the **drug-effect** half of the eventual project. The BCG line (notebook `16_`* and onward) is the first toe in that water; nothing thorough yet.
 - **The eventual goal**: given mouse untreated, mouse treated, and human untreated, predict human treated. This requires both a drug-effect transport and a species-effect transport, composed somehow.
 
 ---
@@ -23,14 +23,16 @@ All three use the same neural-network machinery (CellOT's ICNN-parameterized OT,
 
 ### 1.1 CellOT (paper-original) — drug effect
 
-| | |
-|---|---|
-| **Source cloud** | Untreated cells |
-| **Target cloud** | Drug-treated cells |
-| **Condition** | Treatment status (control vs. drug X) |
-| **Cells in both clouds** | Same cell line / type, just exposed to drug or not |
-| **OOD generalization tested along** | Unseen single cells (held-out cells of the same type) |
-| **Reference** | [Bunne et al., 2023 — `reference_papers/Bunne et al - 2023.pdf`](../reference_papers/Bunne%20et%20al%20-%202023.pdf) |
+
+|                                     |                                                                                                                      |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Source cloud**                    | Untreated cells                                                                                                      |
+| **Target cloud**                    | Drug-treated cells                                                                                                   |
+| **Condition**                       | Treatment status (control vs. drug X)                                                                                |
+| **Cells in both clouds**            | Same cell line / type, just exposed to drug or not                                                                   |
+| **OOD generalization tested along** | Unseen single cells (held-out cells of the same type)                                                                |
+| **Reference**                       | [Bunne et al., 2023 — `reference_papers/Bunne et al - 2023.pdf](../reference_papers/Bunne%20et%20al%20-%202023.pdf)` |
+
 
 This is what CellOT was published to do. The biological claim is: *given a control cell, what would it look like if exposed to drug X?* One CellOT model is trained per drug.
 
@@ -38,12 +40,14 @@ This is what CellOT was published to do. The biological claim is: *given a contr
 
 ### 1.2 CellOT (cell-type framing) — abandoned
 
-| | |
-|---|---|
-| **Source cloud** | Non-CD8 cells (a large pool of many other cell types) |
-| **Target cloud** | CD8 T cells |
-| **Condition** | Cell type (everything else vs. CD8) |
+
+|                                     |                                                                    |
+| ----------------------------------- | ------------------------------------------------------------------ |
+| **Source cloud**                    | Non-CD8 cells (a large pool of many other cell types)              |
+| **Target cloud**                    | CD8 T cells                                                        |
+| **Condition**                       | Cell type (everything else vs. CD8)                                |
 | **OOD generalization tested along** | A held-out **species** (train on mouse, test on human) — see below |
+
 
 We tried this framing in early experiments. The on-disk fossil evidence lives at `cellot/cellot_gpu/results/toggle_*/cellot/`. Notably, the OOD test for these experiments held out *species*, not *cell type*: the model was trained to learn non-CD8 → CD8 on **mouse cells only** (where both clouds are available), then evaluated by transporting human non-CD8 cells and comparing to actual human CD8 cells. So two axes of generalization were being conflated:
 
@@ -61,13 +65,15 @@ It was abandoned for two reasons:
 
 ### 1.3 IMPACT_CellOT — species effect (current main task)
 
-| | |
-|---|---|
-| **Source cloud** | Mouse cells |
-| **Target cloud** | Human cells |
-| **Condition** | Species (mouse vs. human) |
-| **OOD generalization tested along** | Held-out cell type — train on most cell types, test on (e.g.) mouse CD8 → human CD8 |
-| **What we're testing** | Does the OT map learn a generalizable "mouse-to-human" transformation that works on cell types it never saw during training? |
+
+|                                     |                                                                                                                              |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Source cloud**                    | Mouse cells                                                                                                                  |
+| **Target cloud**                    | Human cells                                                                                                                  |
+| **Condition**                       | Species (mouse vs. human)                                                                                                    |
+| **OOD generalization tested along** | Held-out cell type — train on most cell types, test on (e.g.) mouse CD8 → human CD8                                          |
+| **What we're testing**              | Does the OT map learn a generalizable "mouse-to-human" transformation that works on cell types it never saw during training? |
+
 
 This is essentially every numbered experiment from late April onward — the HVG-flavor matrix, IID vs. OOD evaluations, renorm vs. stale comparisons.
 
@@ -75,11 +81,13 @@ This is essentially every numbered experiment from late April onward — the HVG
 
 ### 1.4 scGen — the baseline
 
-| | |
-|---|---|
-| **Architecture** | Variational autoencoder |
+
+|                                    |                                                                                                                                    |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Architecture**                   | Variational autoencoder                                                                                                            |
 | **How it predicts a perturbation** | Compute δ = mean(latent_target) − mean(latent_source) on training cells. For a new source cell, return `decode(encode(cell) + δ)`. |
-| **Reference** | [Lotfollahi et al. — `reference_papers/scGen.pdf`](../reference_papers/scGen.pdf) |
+| **Reference**                      | [Lotfollahi et al. — `reference_papers/scGen.pdf](../reference_papers/scGen.pdf)`                                                  |
+
 
 scGen is older and simpler. It assumes the source-to-target effect is a **single fixed shift vector in latent space**, applied identically to every cell.
 
@@ -99,21 +107,25 @@ In code, `impact_cellot` and what would be `paper_cellot` (the original drug fra
 
 This is why the renaming workstream exists: any older variable named `cellot` (or dict key `"cellot"`, path component `cellot/`) that actually refers to the IMPACT (species) framing should become `impact_cellot`. The library directory itself (`cellot/cellot_gpu/cellot/`) and upstream config files keep their original names — only our *application-level* labels change.
 
-| Use site | Convention | Examples |
-|---|---|---|
-| Code identifiers (path components, dict keys, CLI flags, variable names) | lowercase + underscore | `impact_cellot`, `scgen` |
-| Display labels (figure legends, tables, prose) | preserved capitalization | `IMPACT_CellOT`, `scGen` |
+
+| Use site                                                                 | Convention               | Examples                 |
+| ------------------------------------------------------------------------ | ------------------------ | ------------------------ |
+| Code identifiers (path components, dict keys, CLI flags, variable names) | lowercase + underscore   | `impact_cellot`, `scgen` |
+| Display labels (figure legends, tables, prose)                           | preserved capitalization | `IMPACT_CellOT`, `scGen` |
+
 
 ### 2.1 Alias history — translation table for old names
 
 The repo has accumulated several alias names for the same three model families across different project phases. This table maps **every alias** to the current canonical name. Source of truth: the `ALIAS_TABLE` in `scripts/build_experiments_inventory.py`.
 
-| Canonical family | Aliases seen in old paths, configs, and filenames |
-|---|---|
-| **scGen** (current name: `scgen`) | `scgen`, `speciesot_scgen`, "autoencoder" (informal) |
-| **IMPACT_CellOT** (current name: `impact_cellot`) | `impact`, `impact_or`, `swapped_cellot`, `speciesot_cellot` |
-| **CellOT (abandoned cell-type framing)** | `cellot` (in `speciesot_v1_iter2_*` or `toggle` phases), `speciesot_cellot_swapped`, `normal_cellot` |
-| **CellOT (legacy crossspecies)** — raw 1000-dim ortholog space, no scGen | `cellot` (only in `legacy_crossspecies` phase, top-level `cross_species_ood/` and `race_*/` dirs) |
+
+| Canonical family                                                         | Aliases seen in old paths, configs, and filenames                                                    |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| **scGen** (current name: `scgen`)                                        | `scgen`, `speciesot_scgen`, "autoencoder" (informal)                                                 |
+| **IMPACT_CellOT** (current name: `impact_cellot`)                        | `impact`, `impact_or`, `swapped_cellot`, `speciesot_cellot`                                          |
+| **CellOT (abandoned cell-type framing)**                                 | `cellot` (in `speciesot_v1_iter2_`* or `toggle` phases), `speciesot_cellot_swapped`, `normal_cellot` |
+| **CellOT (legacy crossspecies)** — raw 1000-dim ortholog space, no scGen | `cellot` (only in `legacy_crossspecies` phase, top-level `cross_species_ood/` and `race_*/` dirs)    |
+
 
 **Context-dependent disambiguation**: the directory or dict-key name `cellot` alone is ambiguous because it has meant three different things at different project phases. To resolve it, check:
 
@@ -122,6 +134,7 @@ The repo has accumulated several alias names for the same three model families a
 - Otherwise (current pipelines) → if next to an `impact_cellot/` sibling, the bare `cellot/` is the abandoned cell-type framing; if it's the only model subdir, check the config's `condition` field to disambiguate.
 
 **Where you'll see these old aliases on disk today**:
+
 - `speciesOT/baseline/results/speciesot_cd8/impact_or/evals_ood_data_space/imputed.h5ad` — `impact_or` = `IMPACT_CellOT`.
 - `speciesOT/baseline/results/speciesot_cd8/cellot/evals_ood_data_space/imputed.h5ad` — bare `cellot` in this speciesot_v1 path = abandoned cell-type framing.
 - `cellot/cellot_gpu/results/_archive/toggle_cellot_subdirs/toggle_*/cellot/` — already archived (batch 3); abandoned cell-type framing.
@@ -158,7 +171,7 @@ None of these are implemented yet. The current matrix work (HVG flavor × holdou
 ### Where we actually are today
 
 - **Species effect (IMPACT_CellOT)**: this is what the entire current pipeline measures. HVG-flavor matrix, IID/OOD evaluations, renorm vs. stale comparisons — all of it.
-- **Drug effect**: not yet modeled. The first attempt is the **BCG line** (notebook `16_bcg_mouse_data_prep.ipynb`, `16.1_*`, `17_bcg_prediction.ipynb`). BCG is the tuberculosis vaccine, which has been administered to both mouse and human cohorts and has scRNA-seq data available — so it's a natural choice for a perturbation that exists in both species. So far the work in those notebooks is exploratory: data prep and initial inspection, no thorough modeling yet.
+- **Drug effect**: not yet modeled. The first attempt is the **BCG line** (notebook `16_bcg_mouse_data_prep.ipynb`, `16.1_`*, `17_bcg_prediction.ipynb`). BCG is the tuberculosis vaccine, which has been administered to both mouse and human cohorts and has scRNA-seq data available — so it's a natural choice for a perturbation that exists in both species. So far the work in those notebooks is exploratory: data prep and initial inspection, no thorough modeling yet.
 - **Composition of the two effects**: future work, downstream of the BCG line maturing.
 
 ---
@@ -204,10 +217,12 @@ See `08.1_renorm_vs_stale_comparison.ipynb` for the head-to-head. The current pi
 
 The word "OOD" is used in two different places in the pipeline and they mean different things:
 
-| Term | Lives in | Refers to |
-|---|---|---|
-| **`mode`** (`iid` or `ood`) | `generate_*_configs.py`, sbatch tags, results directory names like `hvg_seurat_d_iid/` | **What data was used to train** the model. `ood`: the held-out cell type was completely excluded from training. `iid`: the "ignored" half of the held-out cell type was added back into training. |
-| **`--setting`** (`iid` or `ood`) | `evaluate.py` CLI flag | **Which slice of the dataset to evaluate on**. `iid`: the standard test split (random cells from in-training cell types). `ood`: the held-out cell type, test half. |
+
+| Term                             | Lives in                                                                               | Refers to                                                                                                                                                                                         |
+| -------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `**mode`** (`iid` or `ood`)      | `generate_*_configs.py`, sbatch tags, results directory names like `hvg_seurat_d_iid/` | **What data was used to train** the model. `ood`: the held-out cell type was completely excluded from training. `iid`: the "ignored" half of the held-out cell type was added back into training. |
+| `**--setting`** (`iid` or `ood`) | `evaluate.py` CLI flag                                                                 | **Which slice of the dataset to evaluate on**. `iid`: the standard test split (random cells from in-training cell types). `ood`: the held-out cell type, test half.                               |
+
 
 **In current practice, we always evaluate with `--setting ood`** — that is, we always measure performance on the held-out cell type, regardless of training mode. This means:
 
@@ -220,7 +235,7 @@ This overload is confusing on first read (an "IID-mode" sbatch that calls `--set
 
 ### 5.5 The `--embedding ae` flag is mis-coupled to `--where data_space` (real-correctness bug)
 
-This is a subtle but consequential evaluation bug, discovered during the 2026-05-27 walkthrough. Captured here so neither future-Junyi nor a future agent has to re-derive it.
+ This is a subtle but consequential evaluation bug, discovered during the 2026-05-27 walkthrough. Captured here so neither future-Junyi nor a future agent has to re-derive it.
 
 #### What `evaluate.py --where data_space` is supposed to mean
 
@@ -247,10 +262,12 @@ scGen's config has no `ae_emb`. The data loader skips the AE-encoding block enti
 
 The same root cause produces both bugs, with sides swapped:
 
-| Model | Natural space (loader's default) | To switch to other space, you must pass `--embedding ae` |
-|---|---|---|
-| IMPACT_CellOT (`ae_emb` in config) | latent (50-d) | yes, to get **data_space** |
-| scGen (no `ae_emb` in config) | data (1000-d) | yes, to get **latent_space** |
+
+| Model                              | Natural space (loader's default) | To switch to other space, you must pass `--embedding ae` |
+| ---------------------------------- | -------------------------------- | -------------------------------------------------------- |
+| IMPACT_CellOT (`ae_emb` in config) | latent (50-d)                    | yes, to get **data_space**                               |
+| scGen (no `ae_emb` in config)      | data (1000-d)                    | yes, to get **latent_space**                             |
+
 
 In both cases, `--embedding ae` is what "switches the space" away from the model's natural default. And in both cases, the silent-bug version is: without the flag, `--where` is *ignored* and you get the natural space regardless. The cookbook spec language must require `--embedding ae` whenever the requested space differs from the model's natural default — or, more simply, always.
 
@@ -271,11 +288,13 @@ hvg_pearson_residuals_a_ood/scgen/evals_ood_data_space/imputed.h5ad
 
 Numerical Pearson-r at ncells=30, nfeatures=all (square these for R²):
 
-| Model / setup | Eval space (verified by /X shape) | r | R² |
-|---|---|---|---|
-| IMPACT a_ood (aeflag) | gene (1000-d) | 0.929 | 0.86 |
-| IMPACT a_iid (standard) | **latent (50-d)** | 0.880 | 0.77 |
-| scGen a_ood (standard) | gene (1000-d) | 0.932 | 0.87 |
+
+| Model / setup           | Eval space (verified by /X shape) | r     | R²   |
+| ----------------------- | --------------------------------- | ----- | ---- |
+| IMPACT a_ood (aeflag)   | gene (1000-d)                     | 0.929 | 0.86 |
+| IMPACT a_iid (standard) | **latent (50-d)**                 | 0.880 | 0.77 |
+| scGen a_ood (standard)  | gene (1000-d)                     | 0.932 | 0.87 |
+
 
 The IID model evaluated in latent space (0.77) is **lower** than the OOD model evaluated in gene space (0.86), which is the *opposite* of the in-sample-fit expectation — a clear sign the comparison is apples-to-oranges.
 
@@ -291,12 +310,14 @@ The IMPACT side of every standard `eval_dataspace/` IMPACT cell would need re-ru
 
 The four (model × where) combinations behave differently with respect to `--embedding ae`. Per the table above, the loader has two natural-space defaults (IMPACT defaults to latent, scGen defaults to data). The flag's job is to *switch* the eval to the non-default space. So:
 
-| Model | `--where` | What `--embedding ae` does | Recommended? |
-|---|---|---|---|
-| IMPACT_CellOT | `data_space` | required (decodes 50-d → 1000-d) | **yes — must pass** |
-| IMPACT_CellOT | `latent_space` | invalid (would trigger column-count assertion at `evaluate.py:130` because GT gets reloaded to 1000-d while predictions stay 50-d) | **no — must NOT pass** |
-| scGen | `data_space` | no-op (scGen's natural is already 1000-d data) | optional; pass for uniformity |
-| scGen | `latent_space` | required (encodes 1000-d → 50-d; this is the §5.5 mirror bug) | **yes — must pass** |
+
+| Model         | `--where`      | What `--embedding ae` does                                                                                                         | Recommended?                  |
+| ------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| IMPACT_CellOT | `data_space`   | required (decodes 50-d → 1000-d)                                                                                                   | **yes — must pass**           |
+| IMPACT_CellOT | `latent_space` | invalid (would trigger column-count assertion at `evaluate.py:130` because GT gets reloaded to 1000-d while predictions stay 50-d) | **no — must NOT pass**        |
+| scGen         | `data_space`   | no-op (scGen's natural is already 1000-d data)                                                                                     | optional; pass for uniformity |
+| scGen         | `latent_space` | required (encodes 1000-d → 50-d; this is the §5.5 mirror bug)                                                                      | **yes — must pass**           |
+
 
 So the practical rule is: **pass `--embedding ae` for every eval *except* IMPACT_CellOT + `--where latent_space`**. The scGen + data-space case is the only one where the flag is a no-op rather than required, but passing it is harmless and keeps the eval-spec uniform. The current `generate_hvg_flavor_configs.py` happens to omit the flag for scGen + data-space (lines 222–242), which is correct in output but inconsistent with this rule — worth normalizing in a future cleanup so the four (model × where) cells follow one pattern instead of three.
 
@@ -324,21 +345,25 @@ Discovered during the 2026-05-28 conversation about the M2 monocyte UMAP. Subtle
 
 In M2 (non-classical + generic monocyte holdout, Pearson HVG), the OOD subset has **261 mouse cells but only 248 human cells**, even though the cell-matching step in `09_data_prep_toggle_experiments.ipynb` (`match_cells_by_celltype_tissue`) guarantees exactly 509 mouse and 509 human cells in the holdout pool. The IGNORE subset has the mirror imbalance: 248 mouse and 261 human. The two halves are perfectly complementary, which by itself is the tell that this is sampling drift, not a data problem.
 
-| | CL:0000875 | CL:0000576 | row total |
-|---|---|---|---|
-| OOD mouse | 218 | 43 | **261** |
-| OOD human | 203 | 45 | **248** |
-| IGNORE mouse | 208 | 40 | 248 |
-| IGNORE human | 223 | 38 | 261 |
+
+|              | CL:0000875 | CL:0000576 | row total |
+| ------------ | ---------- | ---------- | --------- |
+| OOD mouse    | 218        | 43         | **261**   |
+| OOD human    | 203        | 45         | **248**   |
+| IGNORE mouse | 208        | 40         | 248       |
+| IGNORE human | 223        | 38         | 261       |
+
 
 #### Where the imbalance is introduced
 
 Two layers do splitting, and only one of them stratifies on species:
 
-| Layer | What it does | Stratified by `condition` (= species)? |
-|---|---|---|
-| 80/20 train/test on non-holdout cells | `split_cell_data_train_test` (`cellot/cellot_gpu/cellot/data/cell.py:261-281`) | **Yes** — loops over `groupby` groups |
-| 50/50 ignore/ood on holdout cells | `split_cell_data_toggle_ood` (`cell.py:322-353`) | **No** — single `train_test_split` on the pooled holdout pool |
+
+| Layer                                 | What it does                                                                   | Stratified by `condition` (= species)?                        |
+| ------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| 80/20 train/test on non-holdout cells | `split_cell_data_train_test` (`cellot/cellot_gpu/cellot/data/cell.py:261-281`) | **Yes** — loops over `groupby` groups                         |
+| 50/50 ignore/ood on holdout cells     | `split_cell_data_toggle_ood` (`cell.py:322-353`)                               | **No** — single `train_test_split` on the pooled holdout pool |
+
 
 The relevant line in the second function:
 
@@ -373,10 +398,12 @@ Tracing back to the paper-original framing (`§1.1` of this doc):
 
 Same input under the two interpretations:
 
-| Interpretation of `condition` | Holdout pool | After unstratified 50/50 | Does the drift matter? |
-|---|---|---|---|
-| {ctrl, drug} (paper-original) | 509 ctrl + 509 drug | 261 ctrl / 248 drug | No — the metric is a **two-sample comparison** (cloud of 261 predictions vs cloud of 248 ground truths); cells are not paired, and the sample sizes only affect noise floor, not bias |
-| {mouse, human} (speciesOT) | 509 mouse + 509 human | 261 mouse / 248 human | Same metric → still no, *for our current metrics*. But the species axis is now the axis we care about for biology, so the imbalance is worth naming explicitly in figure captions and any future paired analysis. |
+
+| Interpretation of `condition` | Holdout pool          | After unstratified 50/50 | Does the drift matter?                                                                                                                                                                                            |
+| ----------------------------- | --------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| {ctrl, drug} (paper-original) | 509 ctrl + 509 drug   | 261 ctrl / 248 drug      | No — the metric is a **two-sample comparison** (cloud of 261 predictions vs cloud of 248 ground truths); cells are not paired, and the sample sizes only affect noise floor, not bias                             |
+| {mouse, human} (speciesOT)    | 509 mouse + 509 human | 261 mouse / 248 human    | Same metric → still no, *for our current metrics*. But the species axis is now the axis we care about for biology, so the imbalance is worth naming explicitly in figure captions and any future paired analysis. |
+
 
 **Important conceptual note**: the 50/50 ignore/ood split is on a *different axis* from the source/target distinction. It splits "which half of the holdout cells get evaluated on" vs "which half gets discarded" — not "which is source" vs "which is target." After the split, the OOD subset itself contains *both* species, and they play different roles inside it: the 261 mouse cells are model **input**, the 248 human cells are **ground truth**. The imbalance is between "how many predictions we make" and "how many ground truths we compare to" — two clouds of different sizes, which is fine for both OT and for the two-sample metrics we use.
 
@@ -396,12 +423,14 @@ A useful sanity check: if you re-ran the whole pipeline with a different seed an
 
 When the imbalance *would* bite:
 
-| Analysis | Why it cares |
-|---|---|
-| Per-cell paired prediction error | Can't pair 261 mouse predictions with 248 human ground truths |
-| Donor-level matched mouse↔human comparison | The drift can drop a donor entirely on one side |
-| Cell-by-cell transport-cost diagnostics | Some implementations assume equal sample sizes |
-| UMAP overlay counts in figures | Caption says "n=248 actual human OOD"; that 248 vs the 261 mouse you might overlay is honest but worth labeling |
+
+| Analysis                                   | Why it cares                                                                                                    |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Per-cell paired prediction error           | Can't pair 261 mouse predictions with 248 human ground truths                                                   |
+| Donor-level matched mouse↔human comparison | The drift can drop a donor entirely on one side                                                                 |
+| Cell-by-cell transport-cost diagnostics    | Some implementations assume equal sample sizes                                                                  |
+| UMAP overlay counts in figures             | Caption says "n=248 actual human OOD"; that 248 vs the 261 mouse you might overlay is honest but worth labeling |
+
 
 None of these are in the current pipeline. The UMAP one is what surfaced the discrepancy in the first place (`umap_atlas_ref_m2_ood_pearson_scgen_impact.pdf` legend reads "Monocyte holdout — mouse (n=261)" vs "Actual human OOD (n=248)").
 
@@ -426,7 +455,7 @@ A 2026-05-28 audit of the M2 setup against this doc surfaced two methodological 
 
 #### No within-distribution baseline R²
 
-`scripts/evaluate.py` accepts both `--setting ood` (held-out cell type) and `--setting iid` (test split: random cells from cell types that *were* in training). Our pipeline only ever invokes the OOD setting, so every reported number — Figure F's R²-of-means, the IID-vs-OOD bars, the `r2_scatter_*` panels — is on the same OOD slice.
+`scripts/evaluate.py` accepts both `--setting ood` (held-out cell type) and `--setting iid` (test split: random cells from cell types that *were* in training). Our pipeline only ever invokes the OOD setting, so every reported number — Figure F's R²-of-means, the IID-vs-OOD bars, the `r2_scatter_`* panels — is on the same OOD slice.
 
 The 20%-test split (2,418 cells per M2 cell, per-species stratified at split time) is *used* during training as an overfitting monitor (`eval_freq: 250` in IMPACT, `1000` in scGen — the cached `scalars` files in each `*/cache/` directory are the train-vs-test loss curves). It is *never* surfaced into a final `evals.csv`. So we have no in-distribution R² anchor against which to interpret the OOD R²:
 
@@ -472,7 +501,7 @@ Two things the eval does that matter for interpretation (`scripts/evaluate.py`):
 
 `gamma` multiplies the squared distance inside the exponential, so it sets how fast similarity decays with distance. The distance at which similarity falls to ≈ e⁻¹ is `d* = 1/√gamma`:
 
-- **High gamma** → small `d*` → only cells within a tiny radius count as similar (strict / narrow kernel).
+- **High gamma** → small `d`* → only cells within a tiny radius count as similar (strict / narrow kernel).
 - **Low gamma** → large `d*` → even far-apart cells count as similar (loose / wide kernel).
 
 Numerically, for two cells at squared distance 1: `exp(-0.01·1)=0.99` (γ=0.01, "alike") vs `exp(-10·1)=0.00005` (γ=10, "not alike").
@@ -494,11 +523,13 @@ A raw MMD of 0.108 is meaningless without a reference, because even a *perfect* 
 
 which is the part of the discrepancy that is *not* sampling noise. Computed on the existing M2 OOD models (treated pool = 248 real human cells):
 
+
 | ncells | model MMD (IMPACT) | model MMD (scGen) | `mmd_floor` | `2/n` |
-|---|---|---|---|---|
-| 30 | 0.145 | 0.182 | 0.064 | 0.067 |
-| 50 | 0.122 | 0.158 | 0.038 | 0.040 |
-| 80 | 0.106 | 0.144 | 0.024 | 0.025 |
+| ------ | ------------------ | ----------------- | ----------- | ----- |
+| 30     | 0.145              | 0.182             | 0.064       | 0.067 |
+| 50     | 0.122              | 0.158             | 0.038       | 0.040 |
+| 80     | 0.106              | 0.144             | 0.024       | 0.025 |
+
 
 Two readings:
 
@@ -509,12 +540,14 @@ Two readings:
 
 These are two views of the same baseline and are easy to conflate:
 
-| | `mmd_floor` | `2/n` |
-|---|---|---|
-| Source | **measured** from the real cells | **closed-form** (`2.0 / ncells`) |
-| Gammas | average of the self-MMD over all 50 | none — it is the `gamma → ∞` asymptote |
-| Depends on data? | yes (real cloud geometry) | no (only `n`) |
-| Role | the baseline you subtract from `model_mmd` | sanity check / intuition for the magnitude |
+
+|                  | `mmd_floor`                                | `2/n`                                      |
+| ---------------- | ------------------------------------------ | ------------------------------------------ |
+| Source           | **measured** from the real cells           | **closed-form** (`2.0 / ncells`)           |
+| Gammas           | average of the self-MMD over all 50        | none — it is the `gamma → ∞` asymptote     |
+| Depends on data? | yes (real cloud geometry)                  | no (only `n`)                              |
+| Role             | the baseline you subtract from `model_mmd` | sanity check / intuition for the magnitude |
+
 
 They are close (0.024 vs 0.025 at n=80) only because many of the 50 log-spaced gammas live in the high-gamma plateau where the floor ≈ 2/n; the average lands just under it. Use `mmd_floor` for the actual gap-above-floor comparison (it matches the model's recipe); treat `2/n` as the explanation for *why* the floor is that size and why it scales ~1/n.
 
@@ -524,7 +557,7 @@ The floor answers *"how low could MMD go even with a perfect resample of the rea
 
 For IMPACT_CellOT (mouse → human), the ceiling is
 
-> **`mmd_ceiling` = MMD(mouse control, real human target)**
+> `**mmd_ceiling` = MMD(mouse control, real human target)**
 
 computed with the same 50-gamma ensemble, `ncells` subsampling, and `n_reps` averaging as the model's MMD. Biologically: take the OOD mouse cells (model **input**) and compare their distribution directly to the real human cells (model **ground truth**), without running the transport map. This is the **identity / no-transport** reference — the distributional gap the model is trying to close.
 
@@ -542,10 +575,12 @@ A model that genuinely helps should land **below** the ceiling (closer to human 
 
 Raw MMD conflates irreducible sampling noise with model error, and it is not comparable across different `ncells`. The two derived quantities in `extended_metrics.csv` fix both problems:
 
-| Metric | Formula | How to read it |
-|---|---|---|
-| **`gap_above_floor`** | `mmd_model − mmd_floor` | Sample-size-robust **error above the oracle**. Flat across `ncells` when the estimator is working (M2 v08 IMPACT: ≈ 0.092 at n=30/50/80). This is the number to compare across models and preprocessing cuts. |
-| **`frac_gap_closed`** | `(mmd_ceiling − mmd_model) / (mmd_ceiling − mmd_floor)` | **Fraction of the identity→floor gap closed by the model.** 1.0 = reached the floor (best possible at this `ncells`). 0.0 = no better than identity (mouse-as-is). **Negative = worse than identity** — the transport overshot and landed farther from human than untransported mouse. |
+
+| Metric                | Formula                                                 | How to read it                                                                                                                                                                                                                                                                         |
+| --------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `**gap_above_floor`** | `mmd_model − mmd_floor`                                 | Sample-size-robust **error above the oracle**. Flat across `ncells` when the estimator is working (M2 v08 IMPACT: ≈ 0.092 at n=30/50/80). This is the number to compare across models and preprocessing cuts.                                                                          |
+| `**frac_gap_closed`** | `(mmd_ceiling − mmd_model) / (mmd_ceiling − mmd_floor)` | **Fraction of the identity→floor gap closed by the model.** 1.0 = reached the floor (best possible at this `ncells`). 0.0 = no better than identity (mouse-as-is). **Negative = worse than identity** — the transport overshot and landed farther from human than untransported mouse. |
+
 
 **Use `gap_above_floor` and `frac_gap_closed` as the headline MMD comparison**, not raw MMD. This is the rule in `AGENTS.md` and the v08 scorecard notebook (`22_v08_results.ipynb`).
 
@@ -557,12 +592,14 @@ The v08 preprocessing cut (assay filter + stratified split, §5.10) showed why t
 
 R²-of-means (`r2-means` in `evals.csv`, squared to true R²) compares only per-gene **mean vectors**. The same floor/ceiling framing applies, with signs flipped (higher R² = better):
 
-| Metric | Definition | Role |
-|---|---|---|
-| **`r2_self`** | Split-half correlation² of real human target means | **Best achievable** — how well two independent halves of the same population agree (~0.99 for M2 v08). |
-| **`r2_identity`** | corr²(mean(mouse control), mean(human target)) | **No-transport baseline** — how similar mouse and human means are without any model (~0.56 for M2 v08). |
-| **`r2_model`** | corr²(mean(imputed), mean(human)) | What the model actually achieves (~0.93 for M2 v08 IMPACT). |
-| **`frac_r2_closed`** | `(r2_model − r2_identity) / (r2_self − r2_identity)` | Fraction of the identity→self gap closed on the mean. M2 v08 IMPACT ≈ **0.85**. |
+
+| Metric               | Definition                                           | Role                                                                                                    |
+| -------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `**r2_self`**        | Split-half correlation² of real human target means   | **Best achievable** — how well two independent halves of the same population agree (~0.99 for M2 v08).  |
+| `**r2_identity`**    | corr²(mean(mouse control), mean(human target))       | **No-transport baseline** — how similar mouse and human means are without any model (~0.56 for M2 v08). |
+| `**r2_model`**       | corr²(mean(imputed), mean(human))                    | What the model actually achieves (~0.93 for M2 v08 IMPACT).                                             |
+| `**frac_r2_closed**` | `(r2_model − r2_identity) / (r2_self − r2_identity)` | Fraction of the identity→self gap closed on the mean. M2 v08 IMPACT ≈ **0.85**.                         |
+
 
 R² and MMD floor/ceiling are **complementary views of the same experiment**: R² asks whether the model got the average expression right; MMD asks whether the full cloud shape matches. A model can score high `frac_r2_closed` while `frac_gap_closed` is negative — it captured the mean but got the spread wrong (or overshot in distribution space).
 
@@ -586,11 +623,13 @@ The model's `imputed` cloud lives in **AE-decoded gene space** — it passed thr
 
 But `extended_metrics.py` (as of 2026-06-05) computes:
 
-| Reference | Clouds compared | Space |
-|---|---|---|
-| `mmd_model` | imputed vs treated | **decoded vs raw** ← mismatch on imputed side |
-| `mmd_floor` | split-half of treated | **raw vs raw** |
-| `mmd_ceiling` | control (mouse) vs treated | **raw vs raw** |
+
+| Reference     | Clouds compared            | Space                                         |
+| ------------- | -------------------------- | --------------------------------------------- |
+| `mmd_model`   | imputed vs treated         | **decoded vs raw** ← mismatch on imputed side |
+| `mmd_floor`   | split-half of treated      | **raw vs raw**                                |
+| `mmd_ceiling` | control (mouse) vs treated | **raw vs raw**                                |
+
 
 So the model MMD pays an **AE reconstruction tax** that the floor and ceiling do not.
 
@@ -598,32 +637,36 @@ So the model MMD pays an **AE reconstruction tax** that the floor and ceiling do
 
 Run the AE round-trip on the real human target alone:
 
-> **`mmd_ae_recon` = MMD(decode(encode(human)), human)**
+> `**mmd_ae_recon` = MMD(decode(encode(human)), human)**
 
 For m1 v08 this is **≈ 0.083** — a large irreducible discrepancy introduced purely by the autoencoder bottleneck, before any transport happens. The AE cannot perfectly reconstruct 1000-d gene expression from 50-d latent; that distortion shows up as MMD.
 
 Numerically (m1 v08 OOD, `ncells=80`, illustrative):
 
-| Quantity | Value | Clouds | Space |
-|---|---|---|---|
-| Raw identity gap | `mmd_ceiling` ≈ **0.109** | raw mouse vs raw human | raw |
-| AE reconstruction floor | `mmd_ae_recon` ≈ **0.083** | decode(encode(human)) vs human | decoded vs raw |
-| Model MMD | `mmd_model` ≈ **0.11–0.14** | imputed vs human | decoded vs raw |
-| Decoded identity gap | `mmd_decoded_ceiling` ≈ **0.31** | decode(encode(mouse)) vs human | decoded vs raw |
 
-Because `mmd_ceiling` (0.109) < `mmd_model` (0.11+) **and** `mmd_ae_recon` (0.083) is already a large fraction of the model score, **`frac_gap_closed` goes negative** even when the transport map is doing useful work. This is an **apples-to-oranges comparison**, not necessarily evidence that OT "overshot."
+| Quantity                | Value                            | Clouds                         | Space          |
+| ----------------------- | -------------------------------- | ------------------------------ | -------------- |
+| Raw identity gap        | `mmd_ceiling` ≈ **0.109**        | raw mouse vs raw human         | raw            |
+| AE reconstruction floor | `mmd_ae_recon` ≈ **0.083**       | decode(encode(human)) vs human | decoded vs raw |
+| Model MMD               | `mmd_model` ≈ **0.11–0.14**      | imputed vs human               | decoded vs raw |
+| Decoded identity gap    | `mmd_decoded_ceiling` ≈ **0.31** | decode(encode(mouse)) vs human | decoded vs raw |
+
+
+Because `mmd_ceiling` (0.109) < `mmd_model` (0.11+) **and** `mmd_ae_recon` (0.083) is already a large fraction of the model score, `**frac_gap_closed` goes negative** even when the transport map is doing useful work. This is an **apples-to-oranges comparison**, not necessarily evidence that OT "overshot."
 
 ##### The honest reference frame (decoded space)
 
 All three clouds should be measured in the **same space** — either all raw or all AE-decoded. For IMPACT_CellOT the natural choice is decoded space, because that is where `imputed` lives:
 
-| Honest reference | Formula | m1 v08 (≈) |
-|---|---|---|
-| **AE-recon floor** | MMD(decode(encode(treated)), treated) | ~0.083 |
-| **Model MMD** | MMD(imputed, treated) | ~0.11–0.14 |
-| **Decoded-identity ceiling** | MMD(decode(encode(control)), treated) | ~0.31 |
 
-With these references, m1 v08 IMPACT **`frac_gap_closed` ≈ 0.91** — the transport closed ~91% of the gap between "decoded mouse with no transport" and "AE-limited best achievable." That is the performance statement that matches what the pipeline actually computes.
+| Honest reference             | Formula                               | m1 v08 (≈) |
+| ---------------------------- | ------------------------------------- | ---------- |
+| **AE-recon floor**           | MMD(decode(encode(treated)), treated) | ~0.083     |
+| **Model MMD**                | MMD(imputed, treated)                 | ~0.11–0.14 |
+| **Decoded-identity ceiling** | MMD(decode(encode(control)), treated) | ~0.31      |
+
+
+With these references, m1 v08 IMPACT `**frac_gap_closed` ≈ 0.91** — the transport closed ~91% of the gap between "decoded mouse with no transport" and "AE-limited best achievable." That is the performance statement that matches what the pipeline actually computes.
 
 Schematic of the two reference frames side by side:
 
@@ -640,11 +683,8 @@ DECODED-SPACE refs (honest for IMPACT):
 ##### What this means for interpretation — and for improving the model
 
 1. **Do not panic at negative `frac_gap_closed` on IMPACT runs** until the AE-space references are in the sidecar. Check `frac_r2_closed` (mean-based, AE-robust) and `gap_above_floor` alongside it. M2 v08 IMPACT: `frac_r2_closed≈0.85` while raw `frac_gap_closed≈−0.13` — the model is good on means, and the negative MMD fraction is largely a reference-frame artifact, not proof of catastrophic overshoot.
-
 2. **The AE is a real bottleneck for distributional metrics.** Even with a perfect transport map in latent space, decoded output cannot beat `mmd_ae_recon` (~0.083). Improvements to MMD require either a better AE (lower reconstruction MMD) or evaluating in latent space (where transport happens natively — but that is less biologically interpretable, §5.6).
-
-3. **Removing the AE would not automatically yield lower MMD in gene space.** The transport map is *trained against* the AE's latent geometry. The ~0.109 raw mouse-vs-human gap is measured in a space the model never operates in. The relevant identity gap in the model's working space is the decoded ceiling (~0.31), not the raw one (~0.11).
-
+3. **Removing the AE would not automatically yield lower MMD in gene space.** The transport map is *trained against* the AE's latent geometry. The ~~0.109 raw mouse-vs-human gap is measured in a space the model never operates in. The relevant identity gap in the model's working space is the decoded ceiling (~~0.31), not the raw one (~0.11).
 4. **Genuine OT overshoot is still possible** — if, after fixing the reference frame, `mmd_model` still exceeds the decoded ceiling. That would mean transport pushed cells farther from human than decoded-mouse-as-is. Distinguish this from the AE artifact by always comparing in decoded space.
 
 **TODO (code):** add `mmd_ae_recon_floor` and `mmd_decoded_ceiling` to `extended_metrics.py` (load the AE via `cellot.utils.evaluate.load_projectors(model-scgen, "ae", "data_space")`, round-trip control/treated, recompute floor/ceiling) so `frac_gap_closed` in the sidecar is honest by default. Until then, treat raw `frac_gap_closed` on IMPACT as **unreliable** and use `frac_r2_closed` + `gap_above_floor` as the safe headlines.
@@ -675,7 +715,46 @@ R² (`r2-means`) compares only the per-gene **mean** vectors of the two clouds �
 **Decisions**
 
 - **2026-06-02:** do not write per-gamma breakdown or the floor into `evals.csv`; keep as sidecar / notebook artifacts.
-- **2026-06-05:** judge models by `gap_above_floor` / `frac_gap_closed` (and `frac_r2_closed` for means), not raw MMD/R² — but treat raw `frac_gap_closed` on IMPACT as unreliable until AE-space references land in `extended_metrics.py` (see AE round-trip subsection above).
+- **2026-06-05:** judge models by `gap_above_floor` / `frac_gap_closed` (and `frac_r2_closed` for means), not raw MMD/R² — but treat raw `frac_gap_closed` on IMPACT as unreliable until AE-space references land (see AE round-trip subsection above).
+- **2026-06-09:** the AE-honest references now exist in `scripts/decoded_frame_metrics.py` (`mmd_ae_recon_floor`, `mmd_decoded_ceiling`, `frac_gap_closed_decoded`, `frac_r2_closed_decoded`). `./hub metrics` runs it alongside `extended_metrics.py`, and the hub catalog/`scorecard`/`list`/`show`/`card`/vault surface `**frac_gap_closed_decoded` as the headline**. The raw `frac_gap_closed` is kept only as a diagnostic. See the next subsection for the frozen benchmark.
+
+#### The north-star metric and the frozen benchmark (how we answer "are we improving?")
+
+The recurring pain in this project was an unstable ruler: raw `frac_gap_closed` flips
+sign for measurement reasons, so the same model looked "good" on one cut and "broken"
+on another. The fix is one fixed, documented ruler applied to one fixed set of cells.
+
+**North-star (one number):** `frac_gap_closed_decoded` — the fraction of the
+identity→floor MMD gap closed, measured in the AE-decoded frame where the model's
+`imputed` cloud actually lives (so it is apples-to-apples). Range: 1.0 = best
+achievable at this `ncells`; 0.0 = no better than untransported mouse; negative =
+genuine overshoot (now meaningful, because the reference frame is honest).
+
+**Two guardrails (read alongside, never instead):**
+
+- `frac_r2_closed_decoded` — did the model get the per-gene **mean** right? Mean-based,
+so it cross-checks the distributional north-star.
+- `mean_js` — mean per-gene Jensen-Shannon divergence (a symmetric, bounded version of
+**KL divergence**). This is the per-gene distributional check; it is the metric to
+show when the question is phrased in KL terms.
+
+**Why these and not something else:** no single scalar is "objectively correct" for
+distribution matching — the point is a *fixed, documented* choice so comparisons are
+consistent over time. `frac_gap_closed_decoded` answers "does the whole cloud match,
+in the space the model operates in"; `frac_r2_closed_decoded` answers "is the average
+expression right"; `mean_js`/KL answers "is each gene's marginal right." If we ever
+change the ruler, we change it here and re-run the frozen benchmark below — we do not
+silently switch metrics per experiment.
+
+**The frozen benchmark (the fixed set of cells):** model-version comparisons are made
+on the **v08 OOD cuts** — `hvg_pearson_residuals_{m1,m2,a_uncapped}_v08_ood` — with a
+**fixed eval seed (`random_state=0`)** and **fixed `ncells` (30/50/80, headline at 80)**.
+Because the held-out cell types, seed, and subsample sizes are pinned, any change to the
+model or preprocessing is judged by whether `frac_gap_closed_decoded` moves on these
+same cells. New experiments may add their own cuts, but "did this help?" is always
+answered against this frozen benchmark via `./hub scorecard`. (Current standing values
+are in `./hub scorecard` and `22_v08_results.ipynb`; do not hardcode them here — they
+move as runs are recomputed.)
 
 ### 5.10 Sequencing-assay mixing is an ENFORCED filter, not optional metadata
 
@@ -685,11 +764,13 @@ Discovered 2026-06-05 while investigating the M1 held-out monocytes (`speciesOT/
 
 The atlas `_v07.h5ad` datasets **mix sequencing platforms within each species**. For the 426 OOD non-classical monocytes (M1):
 
-| assay | human | mouse |
-|---|---|---|
-| 10x 3' v3 (`EFO:0009922`) | 179 | 0 |
-| 10x 3' v2 (`EFO:0009899`) | 0 | 187 |
+
+| assay                          | human  | mouse  |
+| ------------------------------ | ------ | ------ |
+| 10x 3' v3 (`EFO:0009922`)      | 179    | 0      |
+| 10x 3' v2 (`EFO:0009899`)      | 0      | 187    |
 | **Smart-seq2 (`EFO:0008931`)** | **28** | **32** |
+
 
 Smart-seq2 is plate-based, full-length, no UMIs — a fundamentally different expression distribution from 10x droplet 3'. The Smart-seq2 minority is exactly the within-species "scatter": **~77% of the cells flagged as scattered are Smart-seq2 (vs ~3% of the central blob), and the one fully detached UMAP sub-cluster is 100% Smart-seq2.** The apparent "donor effect" (TSP1/TSP14 scattered, TSP2 clean) is a proxy — those donors simply have more Smart-seq2 cells. So the heterogeneity that kept M1's MMD from tightening is a **preprocessing artifact, not biology**.
 
@@ -719,6 +800,7 @@ The current `_v07.h5ad` files (m1, m2, the whole hvg-flavor matrix) were built *
 
 ## References
 
-- Bunne et al., *Learning single-cell perturbation responses using neural optimal transport*, Nature Methods, 2023. ([`reference_papers/Bunne et al - 2023.pdf`](../reference_papers/Bunne%20et%20al%20-%202023.pdf))
-- Lotfollahi et al., *scGen predicts single-cell perturbation responses*, Nature Methods, 2019. ([`reference_papers/scGen.pdf`](../reference_papers/scGen.pdf))
+- Bunne et al., *Learning single-cell perturbation responses using neural optimal transport*, Nature Methods, 2023. (`[reference_papers/Bunne et al - 2023.pdf](../reference_papers/Bunne%20et%20al%20-%202023.pdf)`)
+- Lotfollahi et al., *scGen predicts single-cell perturbation responses*, Nature Methods, 2019. (`[reference_papers/scGen.pdf](../reference_papers/scGen.pdf)`)
 - Karpathy, [autoresearch](https://github.com/karpathy/autoresearch) — the conceptual inspiration for the (now-deleted) `autospeciesOT/` experiment-orchestrator and a candidate framework for future overnight architecture-search work.
+

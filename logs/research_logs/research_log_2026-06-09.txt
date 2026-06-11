@@ -1,0 +1,67 @@
+Research log — 2026-06-09
+=========================
+Scratch paper. Promote to docs/concepts/ later; not canonical yet.
+
+Context: v08 scorecard (notebook 22), decoded vs raw MMD/R² frames, negative
+frac_gap_closed on IMPACT runs, AE round-trip tax (~0.08 MMD for m1 v08).
+
+---
+
+1. Why use the autoencoder at all?
+
+Given that the AE adds irreducible distortion (1000 → 50 → 1000, mmd_ae_recon ≈ 0.08
+before any transport), it's fair to ask why the pipeline keeps it.
+
+Reasons we *currently* rely on it (not necessarily reasons it's optimal):
+- IMPACT_CellOT is built on scGen's recipe: shared AE, then neural OT in latent space.
+  The AE is not an optional add-on — it's where transport happens.
+- OT on 1000-d sparse gene expression is expensive and high-variance; 50-d latent
+  compresses the problem.
+- Cross-species alignment is done in a space both species were trained to share
+  (same encoder/decoder, ortholog-matched genes).
+- Means mostly survive encode/decode (frac_r2_closed looks fine); the pain is
+  distributional (MMD), not the average profile.
+
+Open question (do not conclude yet): train OT directly on 1000-d (or a larger latent)
+without the bottleneck? Notebook 22 §2 decoded frame suggests transport may be doing
+real work once AE measurement bias is removed (~91% gap closed, m1 v08 IMPACT).
+That supports fixing *how we measure*, not necessarily ripping out the AE tomorrow.
+
+---
+
+2. "Drop the AE" would follow from a naive reading of MMD — and that's the trap
+
+First-pass story from raw metrics:
+  IMPACT model MMD > identity ceiling → frac_gap_closed negative →
+  "the recipe pushes the two distributions further apart than doing nothing."
+
+That conclusion mixes reference frames:
+  - imputed is decode(transport(encode(mouse))) — lives in AE-decoded space
+  - mmd_floor / mmd_ceiling (raw sidecar) are on raw control / raw treated
+  - the AE round-trip tax is charged to the model but not to floor/ceiling
+
+So the AE doesn't necessarily make transport *worse* — it makes raw MMD *behave badly*
+as a judge: apples-to-oranges comparisons, spurious negatives, ceiling below model
+even when decoded-identity ceiling (~0.31) is far above model (~0.11).
+
+Refined statement (what we actually learned):
+  - The AE distorts distributional metrics when floor/ceiling ignore it.
+  - Negative frac_gap_closed on IMPACT is often a *measurement artifact*, not proof
+    OT overshot — cross-check decoded frac_gap_closed and frac_r2_closed.
+  - The AE still sets a real floor on how good data-space MMD can get (can't beat
+    mmd_ae_recon even with perfect latent transport).
+
+Still open: whether the AE is worth its cost in *biology* terms, not just metric
+terms — but that requires decoded (or latent-space) evaluation first, not raw MMD alone.
+
+---
+
+3. The next possible thing
+ -  we have ensured the assay should stay consistent
+ -  we have made sure split is based on stratification
+ -  what we can do next is to just increase the datasize so going from capped to uncapped
+
+Follow-ups to log later
+- [ ] Promote "AE round-trip tax" + "why keep AE?" as separate concept notes
+- [ ] Experiment: OT without 1000→50 bottleneck (only after metric frame is stable)
+- [ ] Run ./hub metrics on atlas-CD8 rows (gap/JS still NaN in §3 deltas)

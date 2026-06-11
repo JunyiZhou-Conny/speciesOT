@@ -4,7 +4,7 @@ Ports the `ALIAS_TABLE` and per-phase cellot disambiguation from
 `scripts/build_experiments_inventory.py` (the script this hub eventually retires).
 
 The 4-family scheme is from the hub-design resolution log
-(REFACTOR_WALKTHROUGH_2026-05-24.md, Q3a):
+(docs/hub_design.md, Q3a):
   scgen / impact_cellot / cellot_celltype / cellot_legacy
 """
 

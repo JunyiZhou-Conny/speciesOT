@@ -21,6 +21,7 @@ from speciesOT.hub.readers import (
     mtime,
     parse_evals_subdir_name,
     read_config,
+    read_decoded_metrics,
     read_evals_csv,
     read_extended_metrics,
     read_status,
@@ -71,6 +72,7 @@ def discover_evals(model_dir: Path) -> list[EvalRecord]:
         space, setting = parse_evals_subdir_name(entry.name)
         h_r2, h_mmd, n_cells = headline_metrics(df)
         floor, ceiling, frac_closed, js = read_extended_metrics(entry)
+        fgc_dec, fr2_dec, ae_floor, dec_ceiling = read_decoded_metrics(entry)
         imputed = entry / "imputed.h5ad"
         out.append(
             EvalRecord(
@@ -89,6 +91,10 @@ def discover_evals(model_dir: Path) -> list[EvalRecord]:
                 headline_mmd_ceiling=ceiling,
                 frac_gap_closed=frac_closed,
                 headline_js=js,
+                frac_gap_closed_decoded=fgc_dec,
+                frac_r2_closed_decoded=fr2_dec,
+                mmd_ae_recon_floor=ae_floor,
+                mmd_decoded_ceiling=dec_ceiling,
             )
         )
     return out
