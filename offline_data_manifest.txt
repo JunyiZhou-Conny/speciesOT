@@ -1,0 +1,13 @@
+# Offline bundle manifest — 2026-06-14
+# Verify: sha256sum each file under offline_bundle/ and compare hashes below.
+# Paths are relative to offline_bundle/ on disk after rsync -avL.
+
+26e42d9fc06f3fde2321a7859cb9b58e16cb17d60d4cb6a53db07f4ae964727c  tier1_crossspecies/hvg-top1k-train-only.6619-backup.h5ad  209165300 bytes
+90330ec17acfbe04bb74d9272e88cb5f65991bf64256c1247a01cfd56179e224  tier1_crossspecies/hvg-top1k-train-only.h5ad  256084932 bytes
+26e42d9fc06f3fde2321a7859cb9b58e16cb17d60d4cb6a53db07f4ae964727c  tier1_crossspecies/train_species.h5ad  209165300 bytes
+c023c005517d80514699966e0216f7c9e39110bd60ebb03fa358cd701daf124d  tier1_crossspecies/valid_species.h5ad  54749206 bytes
+b86c4e332d2b3630bda6081397a07d77e293cfc25694153c5f2cb1eca40032e5  tier2_hub_v08/hvg_pearson_residuals_m1_v07.h5ad  53067650 bytes
+06fd9ed46681b3b1f31d0f7e10ddafabd6800a4ee8f8bb31212abe4959fbac29  tier2_hub_v08/hvg_pearson_residuals_m1_v08.h5ad  32926986 bytes
+
+# Cluster source (for re-sync if needed):
+# offline_bundle/ on holylabs: /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/offline_bundle/

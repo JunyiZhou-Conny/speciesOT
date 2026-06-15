@@ -22,6 +22,7 @@ USAGE:
 
 from pathlib import Path
 import argparse
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
@@ -29,7 +30,29 @@ import pandas as pd
 from cellot.losses import compute_mmd_two_sample, compute_marginal_divergence
 
 
-def _load_clouds(expdir, setting, where, embedding, eval_dir):
+def _marker_feature_names(config, n_markers: int) -> List[str]:
+    """Top DE genes for ``config.data.target`` (paper uses 50 for scRNA MMD)."""
+    from cellot.data.cell import read_single_anndata
+
+    data = read_single_anndata(config)
+    key = f"marker_genes-{config.data.condition}-rank"
+    if key not in data.varm:
+        key = "marker_genes-condition-rank"
+    ranks = data.varm[key][config.data.target].sort_values()
+    return [str(g) for g in ranks.index[:n_markers]]
+
+
+def _subset_features(df, features: Optional[List[str]]):
+    if features is None:
+        return np.asarray(df)
+    cols = [str(c) for c in df.columns]
+    missing = [f for f in features if f not in cols]
+    if missing:
+        raise ValueError(f"[extended-metrics] marker genes missing from cloud: {missing[:5]}")
+    return np.asarray(df[features])
+
+
+def _load_clouds(expdir, setting, where, embedding, eval_dir, feature_names=None):
     """Return (treated, imputed, control) arrays. Prefer the cached npz."""
     npz = eval_dir / "eval_clouds.npz"
     if npz.exists():
@@ -46,9 +69,15 @@ def _load_clouds(expdir, setting, where, embedding, eval_dir):
         config.data.ae_emb.path = str(expdir.parent / "model-scgen")
     control, treated, *_ = load_all_inputs(config, setting, embedding, where)
     imp = ad.read_h5ad(str(eval_dir / "imputed.h5ad"))
-    X = imp.X
-    imputed = np.asarray(X.todense()) if hasattr(X, "todense") else np.asarray(X)
-    return np.asarray(treated), imputed, np.asarray(control)
+    imputed_df = imp.to_df()
+    imputed_df.columns = imputed_df.columns.astype(str)
+    treated.columns = treated.columns.astype(str)
+    control.columns = control.columns.astype(str)
+    return (
+        _subset_features(treated, feature_names),
+        _subset_features(imputed_df, feature_names),
+        _subset_features(control, feature_names),
+    )
 
 
 def main():
@@ -62,6 +91,12 @@ def main():
     ap.add_argument("--n_cells", default="30,50,80")
     ap.add_argument("--n_reps", type=int, default=10)
     ap.add_argument("--random_state", type=int, default=0)
+    ap.add_argument(
+        "--n_markers",
+        type=int,
+        default=None,
+        help="If set, MMD floor/ceiling/model use top-N marker genes (paper: 50)",
+    )
     args = ap.parse_args()
 
     embedding = args.embedding or None
@@ -77,8 +112,23 @@ def main():
     ncells_list = [int(x) for x in args.n_cells.split(",")]
     gammas = np.logspace(1, -3, num=50)
 
+    from cellot.utils import load_config
+
+    config = load_config(expdir / "config.yaml")
+    if "ae_emb" in config.data:
+        config.data.ae_emb.path = str(expdir.parent / "model-scgen")
+    feature_names = None
+    if args.n_markers is not None:
+        feature_names = _marker_feature_names(config, args.n_markers)
+        print(
+            f"[extended-metrics] using top {len(feature_names)} marker genes for MMD",
+            flush=True,
+        )
+
     print(f"[extended-metrics] loading clouds for {expdir} ...", flush=True)
-    treated, imputed, control = _load_clouds(expdir, args.setting, args.where, embedding, eval_dir)
+    treated, imputed, control = _load_clouds(
+        expdir, args.setting, args.where, embedding, eval_dir, feature_names,
+    )
 
     kw = dict(ncells_list=ncells_list, gammas=gammas, n_reps=args.n_reps,
               random_state=args.random_state)
@@ -86,7 +136,14 @@ def main():
     floor = compute_mmd_two_sample(treated, split_half=True, **kw)
     model = compute_mmd_two_sample(imputed, treated, **kw)
     ceil = compute_mmd_two_sample(control, treated, **kw) if control is not None else None
-    mean_js = compute_marginal_divergence(treated, imputed)["mean_js"]
+    # JS on full gene dimension (not marker subset).
+    if feature_names is not None:
+        full_treated, full_imputed, _ = _load_clouds(
+            expdir, args.setting, args.where, embedding, eval_dir, None,
+        )
+        mean_js = compute_marginal_divergence(full_treated, full_imputed)["mean_js"]
+    else:
+        mean_js = compute_marginal_divergence(treated, imputed)["mean_js"]
 
     # --- R2-of-means floor/ceiling (analog of the MMD floor/ceiling) ---------
     # R2 is mean-based, so the AE-decode distortion that inflates MMD does NOT
@@ -116,10 +173,20 @@ def main():
         m = model[model["ncells"] == nc]["mmd"].mean()
         c = ceil[ceil["ncells"] == nc]["mmd"].mean() if ceil is not None else np.nan
         frac = (c - m) / (c - f) if (np.isfinite(c) and c > f) else np.nan
-        rows.append({"ncells": nc, "mmd_model": m, "mmd_floor": f, "mmd_ceiling": c,
-                     "gap_above_floor": m - f, "frac_gap_closed": frac, "mean_js": mean_js,
-                     "r2_model": r2_model, "r2_self": r2_self, "r2_identity": r2_identity,
-                     "frac_r2_closed": frac_r2})
+        rows.append({
+            "ncells": nc,
+            "n_markers": args.n_markers if args.n_markers is not None else "all",
+            "mmd_model": m,
+            "mmd_floor": f,
+            "mmd_ceiling": c,
+            "gap_above_floor": m - f,
+            "frac_gap_closed": frac,
+            "mean_js": mean_js,
+            "r2_model": r2_model,
+            "r2_self": r2_self,
+            "r2_identity": r2_identity,
+            "frac_r2_closed": frac_r2,
+        })
 
     out = pd.DataFrame(rows)
     dst = eval_dir / "extended_metrics.csv"

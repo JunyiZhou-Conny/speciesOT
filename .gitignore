@@ -37,6 +37,10 @@ cellot/_archive/
 # Backup of nested .git directories (local convenience only)
 archive/git_backups/
 
+# Offline data symlinks (real files stay in datasets/; copy with rsync -avL)
+offline_bundle/tier1_crossspecies/
+offline_bundle/tier2_hub_v08/
+
 # Anndata payloads
 *.h5ad
 

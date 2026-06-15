@@ -1,0 +1,16 @@
+# Provenance-only spec (hub prep/generate not used — species holdout via CellOT configs).
+experiment_tag: paper_crossspecies_mouse_ood
+derived_from: null
+data_source: scrna-crossspecies
+data_file: datasets/scrna-crossspecies/hvg-top1k-train-only.h5ad
+source: unst
+target: LPS6
+holdout_species: mouse
+datasplit_strategy: toggle_ood
+mode: ood
+datasplit_stratify: condition
+scgen_n_iters: 250000
+impact_n_iters: 250000
+notes: >
+  Bunne et al. 2023 cross-species LPS replication (mouse OOD holdout).
+  Bundle: cellot/cellot_gpu/paper_crossspecies/ (same pipeline as rat_ood).

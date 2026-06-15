@@ -2,6 +2,7 @@ from pathlib import Path
 import torch
 from collections import namedtuple
 from cellot.networks.icnns import ICNN
+from cellot.utils.optim import sync_optimizer_device
 
 from absl import flags
 
@@ -86,17 +87,18 @@ def load_cellot_model(config, restore=None, device=None, **kwargs):
     f, g = load_networks(config, **kwargs)
     opts = load_opts(config, f, g)
 
+    if device is not None:
+        f = f.to(device)
+        g = g.to(device)
+
     if restore is not None and Path(restore).exists():
         ckpt = torch.load(restore, map_location=device)
         f.load_state_dict(ckpt["f_state"])
-        opts.f.load_state_dict(ckpt["opt_f_state"])
-
         g.load_state_dict(ckpt["g_state"])
+        opts.f.load_state_dict(ckpt["opt_f_state"])
         opts.g.load_state_dict(ckpt["opt_g_state"])
-
-    if device is not None:
-        f = f.to(device)# same pattern, move weights to GPU
-        g = g.to(device)
+        sync_optimizer_device(opts.f, device)
+        sync_optimizer_device(opts.g, device)
 
     return (f, g), opts
 

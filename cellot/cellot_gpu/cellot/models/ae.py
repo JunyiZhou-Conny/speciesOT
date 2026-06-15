@@ -3,6 +3,7 @@ from torch import nn
 from collections import namedtuple
 from pathlib import Path
 from torch.utils.data import DataLoader
+from cellot.utils.optim import sync_optimizer_device
 
 
 def load_optimizer(config, params):
@@ -33,15 +34,16 @@ def load_autoencoder_model(config, restore=None, device=None, **kwargs):
     model = load_networks(config, **kwargs)
     optim = load_optimizer(config, model.parameters())
 
+    if device is not None:
+        model = model.to(device)
+
     if restore is not None and Path(restore).exists():
-        ckpt = torch.load(restore, map_location=device)# when loading saved weights, put them on the device
+        ckpt = torch.load(restore, map_location=device)
         model.load_state_dict(ckpt["model_state"])
         optim.load_state_dict(ckpt["optim_state"])
+        sync_optimizer_device(optim, device)
         if config.model.name == "scgen" and "code_means" in ckpt:
             model.code_means = ckpt["code_means"]
-
-    if device is not None:
-        model = model.to(device) #  after constructing autoencoders, move the weight to GPU
 
     return model, optim
 

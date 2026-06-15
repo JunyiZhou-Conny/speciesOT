@@ -1,0 +1,59 @@
+# GPU upgrade overnight run — 2026-06-14
+
+## Goal
+Validate `CellOT_gpu` on H100/H200, benchmark vs CPU, run paper LPS pipeline.
+
+## Smoke test PASSED (job 22620697)
+- **Device:** NVIDIA H200 (holygpu8a16603)
+- **torch:** 2.3.1+cu121
+- **IMPACT 1000 iters (fresh):** 72s wall, **~28 it/s** steady, **~14 it/s** wall average
+- **vs CPU scGen:** ~1.5 it/s → GPU IMPACT ~**19×** faster (different models; IMPACT CPU even slower)
+
+Full benchmark: `results/paper_crossspecies/_logs/gpu_benchmark.json`
+
+## Production attempt 1 FAILED (job 22621315)
+- Resumed rat IMPACT from **CPU checkpoint** at step 46000 on H200
+- **RuntimeError:** Adam `exp_avg` on CPU, gradients on `cuda:0`
+- Root cause: `load_cellot_model` loaded optim state before `.to(cuda)` without syncing buffers
+
+## Fix (2026-06-14 ~02:00)
+- `cellot/utils/optim.py`: `sync_optimizer_device()`
+- `cellot/models/cellot.py` + `ae.py`: move model to device **before** restore; sync optim state
+- `cellot/train/summary.py`: skip empty logger flush (short smoke runs)
+
+## Resume smoke PASSED (job 22623309)
+- **~26.7 it/s** for 250 extra iters (46000→46249) on H200 — device fix confirmed
+- Logger flush edge case fixed; checkpoint at step 46249
+
+## Production (active — job **22625950**)
+| Job | Role |
+|-----|------|
+| **22625950** `paper_lps_gpu` | rat IMPACT (resume ~46249→250k) → mouse scGen → mouse IMPACT → eval |
+| **22625962** `paper_lps_gpu_c` | 72h continuation (`afterok:22625950`) |
+
+**Verified running on H200:** ~26 it/s, progress bar `*/250000` (not the mistaken 46250 cap).
+
+**Note:** first resume smoke wrote `n_iters: 46250` into prod `config.yaml` via `train.py` yaml dump — restored to 250000; smoke script now uses sandbox `results/_smoke_gpu_resume/`.
+
+**ETA (~26 it/s IMPACT, ~204k iters left at resubmit):**
+- Rat IMPACT remainder: ~2.2 h
+- Mouse scGen 250k: ~3–5 h (estimate; AE step profile differs)
+- Mouse IMPACT 250k: ~2.7 h
+- Eval: ~2–4 h
+- **Total ~8–12 h GPU** once running (plus queue)
+
+## Speed summary (H200)
+| Workload | Rate | vs CPU scGen 1.5 it/s |
+|----------|------|------------------------|
+| IMPACT (GPU) | ~26–28 it/s | ~17–19× |
+| scGen (CPU) | ~1.5 it/s | baseline |
+
+## Env
+- `CellOT_gpu` — H100/H200 training (`requirements-gpu.txt`)
+- `CellOT` — unchanged (CPU / legacy torch 1.11)
+
+## Monitor
+```bash
+squeue -u $USER -n paper_lps_gpu,paper_lps_gpu_c
+tail -f cellot/cellot_gpu/results/paper_crossspecies/_logs/pipeline/paper_crossspecies_pipeline_gpu_22625950.err
+```

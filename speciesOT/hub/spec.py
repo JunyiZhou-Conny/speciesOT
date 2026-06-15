@@ -470,7 +470,7 @@ export PYTHONPATH={CELLOT_DIR}:$PYTHONPATH"""
 # sm_80+) raise "no kernel image is available for execution on the device". Pin
 # GPU jobs to V100 nodes (sm_70 == feature `v100` / `cc7.0`) so training can't
 # land on an incompatible card. Override/clear if torch is ever upgraded.
-_GPU_CONSTRAINT = "v100"
+_GPU_CONSTRAINT = "h100|h200"
 
 
 def _sbatch_header(jobname: str, time: str, partition: str, mem: str,

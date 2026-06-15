@@ -18,8 +18,8 @@ start. Deeper context is linked where useful.
   (scanpy ≥1.12; for `./hub prep` HVG + notebooks). `cellot` is **not pip-installed** —
   set `PYTHONPATH=<repo>/cellot/cellot_gpu` to import it. The `./hub` wrapper
   auto-activates `CellOT`.
-- **GPU jobs must pin V100** (`#SBATCH --constraint=v100`); the env's torch only supports
-  compute capability ≤ sm_70. CPU is the safe fallback (`impact_train_device: cpu`).
+- **GPU jobs** use `CellOT_gpu` (torch 2.x, H100/H200 on `gpu_requeue` via `--constraint=h100|h200`).
+  Legacy `CellOT` (torch 1.11) remains for CPU; V100 no longer required once `CellOT_gpu` is validated.
 - **Don't full-load the 43 GB `tabula_*_all.h5ad` atlas** — use the backed prep path
   ([`speciesOT/hub/prep_backed.py`](speciesOT/hub/prep_backed.py), `source_backed: true`)
   as a high-mem batch job, never on a login node.

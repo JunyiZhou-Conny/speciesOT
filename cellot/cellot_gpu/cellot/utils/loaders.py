@@ -11,6 +11,7 @@ def resolve_device(config):
     return torch.device(name)
 
 
+
 def load_data(config, **kwargs):
     data_type = config.get("data.type", "cell")
     if data_type in ["cell", "cell-merged", "tupro-cohort"]:

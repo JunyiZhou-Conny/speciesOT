@@ -1,0 +1,45 @@
+Paper cross-species LPS replication (Bunne et al. 2023) — 2026-06-13
+
+GOAL
+  Replicate Fig. 4d–f MMD + r² on Hagai/scGen LPS dataset; compute MMD floor/ceiling
+  (50 marker genes + 1000-gene r²) for rat and mouse OOD holdouts.
+
+BUNDLE (self-contained; not hub prep/generate)
+  cellot/cellot_gpu/paper_crossspecies/
+    scripts/  sbatch/  specs/  README.md
+
+DATA (completed)
+  - Source: scGen-equivalent pool backed up as hvg-top1k-train-only.6619-backup.h5ad (62114 × 6619)
+  - Prep: paper_crossspecies/scripts/prep_data.py
+  - Output: datasets/scrna-crossspecies/hvg-top1k-train-only.h5ad (62114 × 1000)
+  - varm: marker_genes-condition-rank (for --n_markers 50 eval)
+  - CellOT resave: paper_crossspecies/scripts/import_for_cellot.py
+  - ETH bundle (10.3929/ethz-b-000609681) not used (auth required)
+
+RESULTS LAYOUT (organized 2026-06-13)
+  - Active: results/paper_crossspecies_{rat,mouse}_ood/
+  - Logs: results/paper_crossspecies/_logs/
+  - Archive: results/_archive/scrna_crossspecies_pre_paper/ (Mar exploratory runs)
+
+PIPELINE JOBS
+  - Training COMPLETE (GPU job 22625950, ~4h47m): all 4 models status=done, 250k iters
+  - Eval FAILED at extended_metrics (Python 3.9 `list[str] | None` in extended_metrics.py)
+  - Fix applied; rat scgen extended_metrics verified locally
+  - Eval remainder: sbatch paper_crossspecies/sbatch/run_eval_only.sbatch
+
+RESULTS TABLE (partial — fill rest when eval job completes)
+  | holdout | model        | r2 OOD (nc=1000) | MMD OOD (nc=1000) | frac_gap_closed | frac_r2_closed |
+  | rat     | scgen        | 0.6636           | 0.2570            | 0.1244          | -0.3357        |
+  | rat     | impact_cellot| TBD              | TBD               | TBD             | TBD            |
+  | mouse   | scgen        | TBD              | TBD               | TBD             | TBD            |
+  | mouse   | impact_cellot| TBD              | TBD               | TBD             | TBD            |
+
+  `python paper_crossspecies/scripts/collect_results.py`
+
+HUB (optional after eval)
+  gpu/paper_crossspecies_{rat,mouse}_ood/{scgen,impact_cellot}
+  ./hub metrics <run_id>
+
+SPECS (provenance)
+  paper_crossspecies/specs/rat_ood.yaml
+  paper_crossspecies/specs/mouse_ood.yaml
