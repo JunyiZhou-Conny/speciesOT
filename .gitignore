@@ -41,6 +41,9 @@ archive/git_backups/
 offline_bundle/tier1_crossspecies/
 offline_bundle/tier2_hub_v08/
 
+# Nested clones / local sandboxes (never commit into this repo)
+scgen-reproducibility/
+
 # Anndata payloads
 *.h5ad
 
