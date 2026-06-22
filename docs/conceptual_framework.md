@@ -157,7 +157,7 @@ Schematically:
    T_species ↓                                ↓ T_species
                                               
    human_untreated ─────────────────────────► human_treated
-                   T_drug' (desired, unobserved directly)
+                   T_drug' (desired, unobserved directly) 	
 ```
 
 We have three corners of this diagram observable in real datasets. We want to predict the fourth corner. There are at least three ways to attempt it:
@@ -167,6 +167,44 @@ We have three corners of this diagram observable in real datasets. We want to pr
 - **(c) Learn a joint conditional model** — train a single model conditioned on (species, treatment), with the unobserved corner imputed during training somehow.
 
 None of these are implemented yet. The current matrix work (HVG flavor × holdout × IID/OOD) is laying the groundwork: making sure each species transport is reliable in isolation, before we try to compose anything.
+
+### Deployment model — pretrained checkpoint vs adapt-on-upload
+
+**Priority (near-term product shape):** researchers use a **fully trained, frozen model** we ship. At inference time they provide query cells (e.g. human untreated); they do **not** re-run full training on their cohort. The model must generalize from whatever it was trained on to the new input — the same contract as Bunne Fig 4 **OOD** (holdout entity never seen during training).
+
+```
+  TRAINING (once, offline)                    INFERENCE (user-facing)
+  ─────────────────────────                   ───────────────────────
+  Train on mouse/rabbit/pig                   User uploads human untreated
+  (or mouse types A,B,C…)                     Apply frozen transport / shift
+  Hold out rat entirely (LPS)                 Compare to human treated if available
+  or hold out cell type M1/M2 (IMPACT)        (evaluation only — not retraining)
+       │                                              │
+       └──── checkpoint on disk ──────────────────────┘
+```
+
+**Why Bunne’s strict holdout is the relevant benchmark for us:** it matches “cold start on a new species / new cell type,” not “we saw your baseline cells during training.” The original scGen paper’s rat benchmark is softer (rat `unst` in training) and is a better match for a **retraining** workflow, not for a shipped checkpoint.
+
+**Future idea (documented, not priority): adapt-on-upload / transfer learning.** A user uploads human untreated cells; we **fine-tune** later layers (or unfreeze a tail of the network) while freezing early representation layers. That resembles scGen-paper-style partial exposure to the target population and could improve accuracy when the user’s cohort is available. Possible axes:
+
+| Mode | User provides | Training at deploy time | Closest existing benchmark |
+| --- | --- | --- | --- |
+| **Frozen checkpoint (priority)** | Query cells only | None | Bunne OOD, IMPACT OOD |
+| **Adapt-on-upload (future)** | Query + optional labels | Partial fine-tune | scGen paper (target baseline in train), Bunne IID |
+
+We should not conflate success on the frozen-checkpoint path with replication of scGen paper headline numbers (~0.91 R²). Those numbers answer a different deployment story.
+
+**Benchmark choice summary:**
+
+| Benchmark | Holdout contract | Matches frozen deployment? |
+| --- | --- | --- |
+| scGen paper (rat LPS) | Rat stimulated out; rat baseline **in** train | No — implies target seen at train time |
+| Bunne Fig 4 OOD | Entire holdout species **out** of train | **Yes** |
+| IMPACT M1/M2 OOD | Entire holdout cell type **out** of train | **Yes** (species axis, unseen type) |
+
+When comparing scGen vs IMPACT_CellOT inside our pipeline, both baselines should use the **same** holdout contract (Bunne-style OOD). When explaining gaps vs the original scGen paper, state explicitly that the paper used a different, easier train split — not that our scGen implementation is “broken.”
+
+See also: `docs/scgen_bunne_ablation_plan.md` for the gene-space-only ablation under fixed Bunne OOD.
 
 ### Where we actually are today
 
