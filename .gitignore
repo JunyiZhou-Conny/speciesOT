@@ -43,6 +43,8 @@ offline_bundle/tier2_hub_v08/
 
 # Nested clones / local sandboxes (never commit into this repo)
 scgen-reproducibility/
+scgen-cellot-ablation/
+scgen-cellot-autoresearch/
 
 # Anndata payloads
 *.h5ad
