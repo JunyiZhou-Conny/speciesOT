@@ -46,6 +46,31 @@ scgen-reproducibility/
 scgen-cellot-ablation/
 scgen-cellot-autoresearch/
 
+# Sibling experiment stacks: commit the CODE, never the artifacts.
+# atlas-paper-vae/results/ holds two 36 MB TensorFlow checkpoints.
+atlas-paper-vae/results/
+atlas-paper-vae/data/
+atlas-paper-vae/logs/
+scgen-cellot-unbalanced/results/
+
+# Slurm output streams. The *.log rule above does not catch these, and some
+# unbalanced-OT .err files are >5 MB.
+*.err
+*.out
+
+# Regenerable eval sidecars written by scripts/eval_external_target.py
+results/
+
+# Test cache
+.pytest_cache/
+
+# Per-machine Cursor state. .cursor/skills/ stays tracked (shared skills).
+.cursor/sandbox.json
+
+# Large unreferenced screenshots; nothing in the repo links them. Delete this
+# line if you want them versioned.
+.cursor-assets/
+
 # Anndata payloads
 *.h5ad
 
