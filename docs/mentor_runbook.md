@@ -210,43 +210,31 @@ modern anndata; step 4 will abort with
 AnnDataReadError: Above error raised while reading key '/layers' ...
 ```
 
-This was hit during a real smoke test of this runbook, so expect it. Convert by
-handing the arrays across as plain `.npy`/`.csv`, which both versions agree on:
+This was hit during a real smoke test of this runbook, so expect it. There is a
+converter for it — run it **in the CellOT env**, because the file has to be
+*written* by anndata 0.7:
 
 ```bash
-# still in the analysis env: dump plain arrays
-conda activate analysis
-python - <<'PY'
-import anndata as ad, numpy as np, pandas as pd, scipy.sparse as sp
-base = ("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/cellot/cellot_gpu/datasets/"
-        "speciesot-human-mouse-hvg/bcg_unvax_human_target_{flavor}")
-for flavor in ("seurat_v3", "pearson_residuals"):
-    a = ad.read_h5ad(base.format(flavor=flavor) + ".h5ad")
-    X = a.X.toarray() if sp.issparse(a.X) else np.asarray(a.X)
-    np.save(base.format(flavor=flavor) + "_X.npy", X.astype("float32"))
-    pd.Series(a.obs_names).to_csv(base.format(flavor=flavor) + "_obs.csv", index=False, header=False)
-    pd.Series(a.var_names).to_csv(base.format(flavor=flavor) + "_var.csv", index=False, header=False)
-    print(flavor, "dumped", X.shape)
-PY
-
-# then rebuild them as v07 files
 conda activate CellOT
-python - <<'PY'
-import anndata as ad, numpy as np, pandas as pd
-base = ("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/cellot/cellot_gpu/datasets/"
-        "speciesot-human-mouse-hvg/bcg_unvax_human_target_{flavor}")
-for flavor in ("seurat_v3", "pearson_residuals"):
-    b = base.format(flavor=flavor)
-    X = np.load(b + "_X.npy")
-    obs = pd.read_csv(b + "_obs.csv", header=None)[0].astype(str).tolist()
-    var = pd.read_csv(b + "_var.csv", header=None)[0].astype(str).tolist()
-    a = ad.AnnData(X=X, obs=pd.DataFrame(index=obs), var=pd.DataFrame(index=var))
-    a.write(b + "_v07.h5ad")
-    print(flavor, "wrote", a.shape, "->", b + "_v07.h5ad")
-PY
+cd /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT
+D=cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg
+for flavor in seurat_v3 pearson_residuals; do
+  python scripts/h5ad_to_v07.py \
+    $D/bcg_unvax_human_target_${flavor}.h5ad \
+    $D/bcg_unvax_human_target_${flavor}_v07.h5ad
+done
 ```
 
 Pass the `_v07.h5ad` files to `--target` in step 4.
+
+`scripts/h5ad_to_v07.py` works on **any** `.h5ad` regardless of which anndata
+wrote it, so use it whenever a file needs to cross between the two environments.
+It reads the file with h5py — which is version-agnostic, since HDF5 is
+self-describing — and rebuilds the object rather than relying on the anndata
+reader. Note that simply deleting the offending `encoding-type` attributes does
+*not* work: modern anndata also stores string columns as categorical groups,
+which anndata 0.7 then misreads a second way. Verified to preserve `X`, layers,
+categorical and numeric `obs`/`var` columns, and both indices exactly.
 
 ### Step 4 — score the prediction against the real human cells (`CellOT` env, ~2–5 min, CPU)
 
