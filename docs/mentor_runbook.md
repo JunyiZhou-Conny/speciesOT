@@ -241,8 +241,11 @@ prediction (`atlas_full_seurat_v3/scgen` for the `seurat_v3` predictions).
 `--aedir` points at the **scgen** directory even when you are scoring an
 IMPACT_CellOT prediction. The ICNN does not carry its own autoencoder — its
 config declares `ae_emb.path: ./results/atlas_full_<flavor>/scgen/`, so both
-model families decode through the same one. (Ignore the empty `model-scgen/`
-directories; they exist throughout the results tree and are never populated.)
+model families decode through the same one.
+
+`model-scgen` is a symlink to `scgen`, so either path works; `scgen` is used here
+because it is the real directory. `load_projectors` needs only `<aedir>/config.yaml`
+and `<aedir>/cache/model.pt`, both of which live there.
 
 Results are written to
 `results/external_eval/<tag>/external_target_metrics.{csv,json}` and printed to the
