@@ -1,0 +1,79 @@
+# Research log — 2026-07-20
+# Mentor-facing synthesis: Stage 0 scGen Fig.5 + Bunne Fig.4 atlases
+# Canvases: scgen-fig5-stage0-metrics · bunne-fig4-crossspecies-metrics
+# Skill: .cursor/skills/metric-atlas-canvas/
+
+## Two replications (not the same experiment)
+
+| | scGen Fig. 5 (Stage 0) | CellOT Fig. 4 (our run) |
+|---|---|---|
+| Question | Latent arithmetic → held-out rat LPS? | OT beat linear AE-shift under species OOD? |
+| Holdout | Rat LPS (rat unst IN train) — soft OOD | Entire species out — rat AND mouse |
+| Genes | 6619 | 1000 HVG |
+| “scGen” | Real TF VAE | AE (beta=0) + mean shift |
+| Paper win | Mean R² ~0.91 | Lower MMD (+ decent mean r) |
+
+Do NOT rank Stage 0 R² against Bunne MMD as “who is better.”
+
+## Five standing signals (guardrails)
+
+1. Mean matching ≠ cloud matching
+   - Stage 0 two-path: r2_all≈0.907, frac_gap_closed_decoded≈−2.96
+   - Care about distributions → paper headlines are not enough; use decoded MMD north-star
+
+2. Identity AEs at this scale are weak (normal, not a one-off)
+   - Stage 0 VAE: train r²/gene≈0.226, target≈0.086; MSE train≈0.076, target≈0.048
+   - CellOT AE: train≈0.26–0.28, target≈0.06–0.09
+
+3. CellOT’s “scGen” ≠ Lotfollahi VAE
+   - Fair for Bunne’s claim (OT vs linear shift); unfair as “beat paper scGen”
+
+4. Our Bunne replication is partial + ranking-unstable
+   - Paper rat OOD: CellOT MMD < scGen; ours: FLIPPED
+   - Decoded north-star: AE-scGen ≥ CellOT on rat and mouse
+   - Stop chasing ETH lockstep / global Fig.4 fidelity as infinite game
+
+5. Gene-space / recipe transfer is fragile (AE study)
+   - G=2000 deep recipe fails at G=6619 recon under same knobs
+   - Don’t rank G without a fixed train recipe; don’t HPO the ocean for “best G”
+
+## Stop (infinite games)
+
+- Global-best G=6619 optimizer search
+- Exact ETH Fig.4 lockstep (we don’t even recover the trend)
+- Latent-frame atlas completeness as a blocker
+- Cross-paper “best model” without matched protocol
+
+## Ownable claims
+
+- Additive/mean-centric methods can look great on gene-mean R² while failing/weak on MMD/decoded clouds.
+- OT must earn the cloud metric under a declared protocol; our Bunne-style runs do not yet show a clean OT win.
+- Shared AEs are weak identity maps → judge transport in decoded frame.
+- Stage 0 mean gate: PASSED. Bunne OT-wins-MMD story: NOT reproduced.
+
+## Practical next scoreboard (pick one)
+
+1. Soft OOD / scGen-split (Fig.5-like), or
+2. Strict species OOD (label Bunne-style, not Fig.4)
+
+Ask only: does OT beat linear AE-shift on frac_gap_closed_decoded (+ mean R² / JS guardrails)?
+
+## Recon vs transport mean R² (verified 2026-07-20)
+
+Training (VAE/AE) optimizes reconstruction (+ KL), NOT post-transport r2_all or MMD.
+
+Stage 0 two-path:
+- Identity baseline r2_identity≈0.867 (do-nothing already high)
+- Model r2_all≈0.907 → only ~+0.04 absolute; frac_r2_closed≈0.30
+- recon_target_r2_pergene≈0.086 despite “low-ish” MSE≈0.048
+→ Paper 0.91 looks huge without the identity baseline; lift is modest.
+→ Low per-gene recon r² does NOT block high mean-shift r2_all when identity is already ~0.87.
+
+Ladder G=6619: PCA recon=1.0 but transport ≈ raw mean-shift (fgc≈0.208).
+Good identity ≠ automatically better transport than raw/linear.
+
+## Mentor shareables
+
+- Canvas: scgen-fig5-stage0-metrics
+- Canvas: bunne-fig4-crossspecies-metrics
+- Canvas: mentor-paper-replication-synthesis (this meeting’s summary view)

@@ -622,6 +622,29 @@ Raw MMD conflates irreducible sampling noise with model error, and it is not com
 
 **Use `gap_above_floor` and `frac_gap_closed` as the headline MMD comparison**, not raw MMD. This is the rule in `AGENTS.md` and the v08 scorecard notebook (`22_v08_results.ipynb`).
 
+##### Conditioning caveat on the gap-closed fraction (added 2026-07-27)
+
+The fraction divides by `ceiling − floor`. That denominator is only a usable yardstick when it is large relative to how far the model sits above the floor, and in the decoded frame it also **contains the model's own AE floor**, so different models are graded against different denominators. Measured decoded denominators:
+
+| Cut | `mmd_ae_recon_floor` | `mmd_decoded_ceiling` | denominator | verdict |
+| --- | ---: | ---: | ---: | --- |
+| atlas m1 v08 (hub AE, ncells=80) | 0.080 | 0.306 | **0.225** | well-conditioned |
+| atlas m2 v08 (hub AE, ncells=80) | 0.066 | 0.292 | **0.225** | well-conditioned |
+| atlas m1/m2 paper VAE | 0.048 / 0.045 | 0.212 / 0.202 | **0.164 / 0.157** | well-conditioned |
+| Hagai LPS rat-LPS6 holdout | 0.112 | 0.135 | **0.022** | ill-conditioned |
+
+There are two distinct problems, and they should be checked separately.
+
+**1. Sensitivity.** A change of δ in `mmd_model` moves the fraction by `δ / denominator`. Our MMD is subsampled (ncells=80, 10 reps), so δ ≈ 0.005 is ordinary noise. On LPS that moves the fraction by 0.005/0.022 ≈ **0.23**; on the atlas by 0.005/0.225 ≈ **0.02**. The LPS fraction therefore carries roughly one usable digit.
+
+**2. Non-comparability across models.** The decoded denominator contains `mmd_ae_recon_floor`, a property of *the model being scored*. In Round 1 the denominators were 0.022 (dropout 0.2) versus 0.046 (dropout 0) — a 2× difference in ruler length — so the fractions −2.82 and −0.10 are not measured on the same scale and must not be ranked against each other.
+
+Rule: always report `decoded_denominator` and `mmd_model / mmd_ae_recon_floor` beside the fraction. Do not rank models on the fraction when their AE floors differ materially; rank on absolute `mmd_model`, `gap_above_floor`, and the model/floor ratio instead.
+
+Separately, note that `(ceiling − floor) < gap_above_floor` is algebraically equivalent to `model > ceiling` — the model is worse than decoded identity. That is a substantive interpretation flag, not a conditioning flag, and it does **not** imply |frac| > 1 (LPS dropout 0: denominator 0.046 < excess 0.051, yet frac = −0.105).
+
+This does **not** demote the decoded north-star on the atlas, where the denominator is ~10× larger and the statistic behaves well. It is a per-cut conditioning check, not a policy change.
+
 Example (M2 v08 OOD IMPACT, `ncells=80`): `mmd_model=0.117`, `mmd_floor=0.023`, `mmd_ceiling=0.106` → `gap_above_floor=0.093`, `frac_gap_closed≈−0.13`. R²-of-means is 0.93 — the model nails the mean while the full-distribution metric says it overshoots relative to identity. That tension between R² and MMD is real and is exactly why both metrics are kept (see below).
 
 The v08 preprocessing cut (assay filter + stratified split, §5.10) showed why these metrics matter: m1 IMPACT's `frac_gap_closed` went from **−0.71 (v07) to +0.06 (v08)** — a win that raw R²/MMD alone obscured — while `gap_above_floor` tightened 0.113 → 0.080. The ceiling also **rose** (0.090 → 0.109) because dropping Smart-seq2 removed a platform-mismatch artifact and exposed the true cross-species gap.
@@ -629,6 +652,35 @@ The v08 preprocessing cut (assay filter + stratified split, §5.10) showed why t
 #### R² floor and ceiling — the mean-based analog
 
 R²-of-means (`r2-means` in `evals.csv`, squared to true R²) compares only per-gene **mean vectors**. The same floor/ceiling framing applies, with signs flipped (higher R² = better):
+
+##### Required five-axis autoencoder identity panel
+
+Whenever encode→decode reconstruction is evaluated, report these five axes
+together. They answer different questions and must not be substituted for one
+another:
+
+| Name | Formula / axis | Question |
+| --- | --- | --- |
+| Reconstruction MSE | mean `(X − Xhat)²` over cells × genes | How large is the exact coordinate error? |
+| Paired-cell Pearson²/gene (`recon_*_r2_pergene`, legacy name) | for each gene, `corr(X[:,g], Xhat[:,g])²` across paired cells; then mean genes | Did the round-trip preserve which cells were high or low for each gene? |
+| COD/gene | for each gene, `1 - SSE(X[:,g], Xhat[:,g]) / SST(X[:,g])`; then mean genes | Did reconstruction beat that gene's mean predictor on exact values? |
+| Mean-vector Pearson² | `corr(mean_cells(X), mean_cells(Xhat))²` across genes | Did reconstruction preserve the average expression program? |
+| Per-cell Pearson r | for each cell, `corr(X[i,:], Xhat[i,:])` across genes; then mean cells | Did each cell preserve its broad high-gene/low-gene profile? |
+
+The three Pearson metrics are invariant to their relevant affine rescaling and
+are **not** variance explained in the standard COD sense. In particular,
+`recon_target_r2_pergene=0.086` should be read as weak paired-cell rank/linear
+identity, not literally “8.6% of variance explained,” until COD and null
+baselines are shown. Conversely, a high paper `r2_all` can coexist with weak
+cell identity because every cloud is collapsed to one gene-mean vector first.
+No single member of this panel is an adequate “good AE / bad AE” verdict.
+
+When a biologically predefined DEG or marker set exists, repeat two identity
+questions on that set: paired-cell Pearson²/gene (does each marker preserve
+which cells are high or low?) and raw-vs-reconstructed mean-vector Pearson²
+(does the AE preserve the average marker program?). Keep both distinct from a
+post-transport DEG mean-vector score. Feature sets derived from held-out target
+cells are evaluation-only and must not enter training or model selection.
 
 
 | Metric               | Definition                                           | Role                                                                                                    |

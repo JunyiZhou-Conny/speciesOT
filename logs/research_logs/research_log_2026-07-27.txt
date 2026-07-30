@@ -1,0 +1,766 @@
+# Research log — 2026-07-27
+# Bounded paper-scGen AE follow-up, Round 1
+# Canvas: scgen-ae-followup-round1-metrics
+
+## Decision
+
+Round 1 completed (jobs 35325410_1–4). No variant passed the joint
+identity-improvement + Figure-5 transport non-inferiority gate. Per the
+preregistered design:
+
+- do not launch z=400
+- do not launch the variance-aware objective
+- do not launch multi-seed winner confirmation (there is no eligible winner)
+- unbalanced OT remains paused
+
+This is a successful stopping decision, not a failed execution.
+
+## Fixed experiment
+
+Hagai 6,619 genes; rat LPS6 held out; rat unst in train; z=100; 800–800
+encoder/decoder; 300 epochs; seed 0; same optimizer/data/split/Figure-5
+arithmetic. Round 1 changed only:
+
+- VAE (KL + sampled z) vs deterministic AE (z=mu, alpha=0)
+- dropout 0.2 vs dropout 0
+
+Every task trained, computed all-gene/top-100-DEG transport metrics, and wrote
+the five-axis identity sidecars.
+
+## Results
+
+| Model | paired r²/gene | COD/gene | recon MMD | variance median | zero recon | all r² | DEG r² | decoded fgc |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| retrained VAE, drop .2 | .087 | -.016 | .114 | .037 | .465 | .905 | .694 | -2.822 |
+| retrained VAE, drop 0 | .049 | -.350 | .061 | .140 | .661 | .916 | .742 | -.104 |
+| retrained DAE, drop .2 | .087 | -.021 | .106 | .045 | .472 | .900 | .686 | -2.763 |
+| retrained DAE, drop 0 | .050 | -.400 | .061 | .159 | .657 | .910 | .735 | -.035 |
+
+True target zero fraction is .741. Frozen paper checkpoint reference:
+paired r²/gene=.086, COD=-.020, recon MMD≈.113, all r²=.907,
+DEG r²=.742, decoded fgc≈-2.957.
+
+## Hypotheses answered
+
+### H1: dropout causes distribution smoothing — supported
+
+Removing dropout:
+- halves reconstruction MMD (~.114 → ~.061)
+- halves mean JS (~.267 → ~.12)
+- restores more variance (median ratio ~.04 → .14–.16)
+- moves reconstructed zero fraction toward truth (.46 → .66; truth .74)
+- moves decoded transport gap closure from ~-2.8 to approximately zero
+
+### H2: dropout removal improves paired identity — rejected
+
+The same change:
+- lowers paired-cell Pearson²/gene from ~.087 to ~.05
+- drives macro COD from ~-.02 to -.35/-.40
+- lowers per-cell r from ~.878 to ~.85
+
+Thus better cloud/marginal matching did not preserve which reconstructed row
+belongs to which input cell. This is the concrete MMD-vs-pairing distinction.
+
+### H3: KL/stochastic sampling is the main bottleneck — rejected
+
+VAE and DAE are similar within each dropout setting. The dropout effect is much
+larger than the VAE-vs-DAE effect on identity and distribution metrics.
+
+### H4: one candidate improves identity, distribution and transport together — rejected
+
+Dropout-0 models pass the paper transport non-inferiority thresholds and
+dramatically improve distributional metrics, but fail the identity gate.
+Dropout-.2 models retain the baseline identity profile but fail DEG
+non-inferiority and do not materially improve identity.
+
+No eligible winner exists.
+
+## Important reproducibility observation
+
+The retrained paper-recipe VAE achieved all-gene r²=.905 but DEG r²=.694,
+whereas the frozen historical checkpoint has DEG r²=.742. The absolute
+all-gene headline is stable; the DEG result is training-run sensitive. This is
+another reason not to promote a seed-0 follow-up without an eligible winner and
+multi-seed confirmation.
+
+## Post-hoc analysis (added after the gate ran)
+
+### The decoded gap-closed fraction is ill-conditioned on this cut
+
+Components at ncells=80, two-path:
+
+| model | mmd_model | ae_floor | dec_ceiling | denominator | frac |
+|---|---:|---:|---:|---:|---:|
+| frozen paper ckpt | .2012 | .1125 | .1349 | .0224 | -2.96 |
+| VAE drop .2 | .1970 | .1136 | .1354 | .0218 | -2.82 |
+| VAE drop 0 | .1117 | .0610 | .1069 | .0459 | -0.10 |
+| DAE drop .2 | .1927 | .1044 | .1279 | .0235 | -2.76 |
+| DAE drop 0 | .1119 | .0594 | .1101 | .0507 | -0.04 |
+
+Raw floor/ceiling are identical across all models (.0238/.0453) as expected,
+which is a good harness consistency check.
+
+Two independent problems with the fraction here:
+
+1. Sensitivity. A change of d in mmd_model moves frac by d/denominator. MMD is
+   subsampled (ncells=80), so d ~ .005 is ordinary noise: that is +-.23 of slop
+   on LPS (denom .022) versus +-.02 on the atlas (denom .225). The LPS fraction
+   carries about one usable digit.
+2. Non-comparability. The denominator contains the scored model's own AE floor.
+   Round-1 denominators were .022 (dropout .2) vs .046 (dropout 0), so -2.82 and
+   -0.10 are measured on rulers of different length and must not be ranked
+   against each other. Dropout-0's fraction improves 28x while its underlying
+   distance improves only ~1.8x.
+
+Correction (same day): an earlier draft of this rule claimed that
+"denominator < gap_above_floor" implies |frac| > 1. That is false. The condition
+is algebraically just model > ceiling (worse than decoded identity); the LPS
+dropout-0 run satisfies it with |frac| = .105. Fixed in conceptual_framework.md
+5.9 and the metric-atlas skill: report denominator and model/floor always, do
+not rank on the fraction when AE floors differ materially, and treat
+model > ceiling as an interpretation flag rather than a conditioning flag.
+
+The atlas north-star policy is unchanged (atlas denominators .157-.225).
+
+### Model MMD relative to each model's own AE floor is flat
+
+```
+frozen paper ckpt  .2012/.1125 = 1.79
+VAE  dropout 0.2   .1970/.1136 = 1.73
+VAE  dropout 0     .1117/.0610 = 1.83
+DAE  dropout 0.2   .1927/.1044 = 1.85
+DAE  dropout 0     .1119/.0594 = 1.88
+```
+
+Within single-seed, subsampled precision this is constant. Dropout-0's better
+absolute transport MMD is bought almost entirely by a better reconstruction
+floor, not by the latent shift becoming relatively better. Round 1 therefore
+improved the autoencoder and did not improve the transport, which is why
+Round 2 (capacity) is skipped.
+
+For contrast, on the atlas the transport map DOES move this ratio: ICNN
+(IMPACT) sits at 1.29 (m1) / 1.76 (m2) versus mean-shift scGen at 2.15 / 2.45.
+
+### Cross-dataset: LPS identity is dataset-limited, not architecture-limited
+
+Same TF VAEArith architecture, different data:
+
+| | train paired r2/gene | target paired r2/gene | decoded frac |
+|---|---:|---:|---:|
+| LPS paper VAE, 6619 genes | .226 | .086 | -2.96 |
+| atlas paper VAE m1, 1000 HVG | .816 | .353 | +0.51 |
+| atlas paper VAE m2, 1000 HVG | .816 | .357 | +0.50 |
+
+So .086 is largely a property of the sparse 6619-gene Hagai matrix. Where
+identity is ~4x better, decoded transport is also far better. Confounded by
+gene space, holdout type and transport rule, so suggestive rather than causal,
+but it supports continuing to invest in the autoencoder.
+
+CORRECTION (2026-07-29). Two problems with citing this table as a controlled
+contrast:
+
+1. The train column is mixed-composition on BOTH rows, so both are inflated by
+   the between-group effect quantified in C1 below. The composition-controlled
+   within-group numbers at matched n=180 are LPS .108 (seen groups) vs atlas m1
+   .482 (seen groups). The gap is still large (~4.5x) but these, not .226/.816,
+   are the comparable figures.
+2. "Same architecture" is verified and exact (both call the vendored
+   scgen.VAEArith with z=100, 800-800 hardcoded in models/_vae.py,
+   dropout .2, alpha 5e-5, lr 1e-3, batch 32, 300 epochs, TF 1.15, seed 0).
+   But the PREDICTION RULE differs: LPS is Figure-5 two-path, the atlas is
+   single_species_delta (see atlas-paper-vae/README.md). Do not describe the
+   two rows as sharing Figure-5 arithmetic.
+
+Further uncontrolled axes, for the record: different datasets entirely (Hagai
+4-species fibroblasts vs Tabula human/mouse atlas), holdout semantics
+(condition vs cell type), train size (~53k LPS cells vs 5,857 atlas cells),
+HVG selection flavor, and evaluation slice size (9,423 vs 365 OOD cells). A
+one-factor gene-space test is possible on the arms in
+scgen-cellot-ablation/data/processed/arms/ (G250/G500/B_1k/G2000/G4000/A_6619,
+all `_scgen` split) but has not been run.
+
+## Round 3 launched (identity-first)
+
+Direction chosen by the user: keep optimizing the autoencoder, accepting the
+risk that a better AE may not improve transport.
+
+Mechanism hypothesis: the MSE objective contains no term rewarding correct
+per-gene cell ordering. Round 3 adds a differentiable per-gene correlation loss
+(mean over genes of 1 - Pearson r across the cells in the batch), optionally
+with the per-gene log-variance term, each auto-scaled to a declared 10% of the
+current reconstruction loss so no lambda sweep is needed.
+
+2x2 at fixed z=100, dropout 0.2, 300 epochs, batch 256:
+  r3_mse_b256      corr 0    var 0     <- matched-batch control
+  r3_corr_b256     corr .10  var 0
+  r3_var_b256      corr 0    var .10
+  r3_corrvar_b256  corr .10  var .10
+
+Batch 256 is required because a per-gene correlation over 32 cells is too
+noisy; it costs 8x fewer gradient steps, so all Round-3 gates are relative to
+the matched-batch control rather than to absolute Round-1 numbers.
+
+Leakage guard: the correlation term is applied to ALL genes. The rat-LPS
+top-100 DEG list comes from the held-out condition and stays evaluation-only.
+
+Graph validated in scgen_tf1 before launch: with both fractions at 0 the
+auxiliary loss reproduces the vendored loss exactly (2.9601 vs 2.9601); loss
+deltas confirm the auto-scaling contributes exactly 10% per active term
+(+0.2960) and 20% for both (+0.5920) of the 2.962 reconstruction loss; no
+non-finite values across training steps.
+
+Job 35488948 (array 1-4%2). All four COMPLETED, ~1h each.
+
+## Round 3 results: no eligible variant
+
+Held-out rat LPS6, deterministic decode(mu(X)), seed 0.
+
+| tag | corr | var | pairR2 | COD | perCell | meanVec | DEGpair | reconMMD | varRet | zeroRecon | allR2 | degR2 | fgc |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| r3_mse_b256 (control) | 0 | 0 | .0854 | +.0058 | .8787 | .9600 | .3367 | .1127 | .039 | .416 | .9151 | .7790 | -2.461 |
+| r3_corr_b256 | .10 | 0 | .0842 | +.0004 | .8787 | .9604 | .3391 | .1169 | .043 | .444 | .9133 | .7394 | -3.619 |
+| r3_var_b256 | 0 | .10 | .0671 | -1.0769 | .8573 | .9383 | .2910 | .0730 | .213 | .660 | .8923 | .7799 | -1.496 |
+| r3_corrvar_b256 | .10 | .10 | .0690 | -.4953 | .8572 | .9344 | .2898 | .0814 | .188 | .639 | .8830 | .7333 | -2.752 |
+
+True zero fraction .741.
+
+### Finding 1: the correlation term did essentially nothing
+
+pairR2 .0842 vs control .0854 (-.0013); COD +.0004 vs +.0058; DEG paired .3391
+vs .3367. Directly optimizing a training-time twin of the audit metric failed
+to move the audit metric.
+
+Leading explanation (testable, not yet tested): the loss and the metric are not
+the same quantity. The audit metric is computed on ONE homogeneous slice (rat
+LPS6 only), so it measures WITHIN-condition cell-to-cell structure. The training
+loss is computed on batches of 256 cells sampled across 4 species x 2
+conditions, so its per-gene correlation is dominated by BETWEEN-group mean
+differences -- which the AE already reproduces well (meanVec .96). The term is
+therefore close to satisfied on arrival and exerts little pressure on the hard
+within-slice structure.
+
+Secondary contributor: Pearson is scale-invariant, so the term can be satisfied
+by preserving pattern at any amplitude (varRet only .039 -> .043).
+
+Implied fix for any Round 4: compute the correlation loss WITHIN homogeneous
+groups (species x condition strata) inside each batch, not across the mixed
+batch. Do not simply raise the 10% weight.
+
+### Finding 2: the variance term behaves exactly as designed, and it is not enough
+
+varRet .039 -> .213 (5x), zeroRecon .416 -> .660 against a true .741,
+reconMMD .1127 -> .0730 (-35%), fgc -2.461 -> -1.496. But COD collapses to
+-1.08 and pairR2 falls to .067.
+
+Restoring per-gene spread without knowing WHICH cells should be high puts the
+variance in the wrong places. This is the same trade-off dropout-0 produced in
+Round 1, now reproduced by an explicit loss term -- so it is a property of the
+objective, not of dropout.
+
+### Finding 3: the batch-256 control was NOT undertrained
+
+The pre-declared check passes. Control vs Round-1 batch-32 VAE dropout .2:
+allR2 .9151 vs .905, degR2 .7790 vs .694, pairR2 .0854 vs .087,
+COD +.0058 vs -.016. The 8x reduction in gradient steps did not degrade the
+model; the control is the best paper-metric run we have and posts the first
+non-negative COD in the study.
+
+### Finding 4: our transport guardrail is tighter than run-to-run noise
+
+DEG R2 across three runs of a nominally paper-like recipe: frozen checkpoint
+.742, r1_vae_drop02 .694, r3_mse_b256 .779. Observed spread ~.085, far wider
+than the .02 guardrail. Consequence: the transport-gate failures of r3_corr
+(-.0396) and r3_corrvar (-.0457) are inside the noise band and must NOT be read
+as real degradations. The identity-gate failures are the meaningful part of the
+verdict, and those are unambiguous.
+
+Do not treat the control's .9151 / .7790 as a new best result either; it sits
+inside the same spread. Any headline claim needs the 3-seed stage.
+
+### Decision
+
+No winner; multi-seed confirmation is not triggered. The identity-first lever as
+implemented (all-gene, batch-level correlation) does not work. Either fix the
+loss to be group-stratified (Round 4) or accept that within-slice cell identity
+is not reachable from this objective family at z=100 on this dataset.
+
+## Track B: atlas identity audit (no retraining, job 35538746)
+
+Restored the existing atlas-paper-vae m1/m2 checkpoints and ran the identical
+five-axis + marker identity panel. Same architecture (TF VAEArith, z=100,
+800-800, dropout .2, alpha 5e-5) as the LPS paper model. ~3 min total.
+
+Note m1 and m2 ARE different cuts: m1 holds out CL:0000875 only (365 OOD
+cells), m2 holds out CL:0000875 + CL:0000576 (401 OOD cells); different HVG
+sets, same donors/cells.
+
+| slice | n | MSE | pairR2 | COD | perCell | meanVec | reconMMD | shuffled |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| LPS train | 10000 | .0769 | .2253 | .1554 | .8197 | .9976 | .0484 | .00010 |
+| LPS rat unst (seen) | 8421 | .0436 | .1235 | .0660 | .8911 | .9971 | .0911 | .00012 |
+| LPS rat LPS6 (held out) | 9423 | .0482 | .0862 | -.0199 | .8773 | .9590 | .1130 | .00010 |
+| atlas m1 train | 5857 | .0896 | .8158 | .7941 | .9548 | .9987 | .0257 | .00017 |
+| atlas m1 mouse OOD | 182 | .1393 | .1976 | .0406 | .9384 | .9876 | .0731 | .00564 |
+| atlas m1 human OOD | 183 | .1688 | .3533 | -.3049 | .9121 | .9909 | .0495 | .00469 |
+| atlas m2 train | 5802 | .0903 | .8163 | .7926 | .9544 | .9991 | .0259 | .00016 |
+| atlas m2 mouse OOD | 200 | .1357 | .2055 | .0579 | .9400 | .9901 | .0672 | .00473 |
+| atlas m2 human OOD | 201 | .1695 | .3569 | .2278 | .9093 | .9914 | .0433 | .00364 |
+
+### Finding B1: LPS has a FITTING problem; the atlas has only a GENERALIZATION problem
+
+SUPERSEDED IN PART by C1/C2 below (read those before citing B1). The train
+figures used here are mixed-composition, which inflates the apparent
+train-to-heldout drop on both datasets. Controlled, the surviving half of B1 is
+that LPS within-group paired identity is low everywhere (~.10, seen or unseen);
+the failing half is "the atlas has ONLY a generalization problem" -- the atlas
+has both much better within-group fitting (.482) AND a real generalization
+deficit (+.22), while LPS has essentially no generalization deficit (+.007).
+
+The same architecture reaches pairR2 .816 / COD .794 on atlas TRAIN but only
+.225 / .155 on LPS TRAIN. So the architecture can learn near-faithful paired
+identity when the data supports it. LPS cannot even fit it in-sample.
+
+Both then lose most of it out of sample:
+  LPS    .225 -> .086 (retains 38%)
+  atlas  .816 -> .353 human OOD (retains 43%), .198 mouse OOD (24%)
+
+So "better AE identity" is two separable problems, and only the atlas isolates
+the generalization one.
+
+### Finding B2: the Round-3 correlation term did nudge TRAIN, and none of it transferred
+
+| tag | TRAIN pairR2 | TRAIN COD | HELDOUT pairR2 | HELDOUT COD |
+|---|---:|---:|---:|---:|
+| r3_mse_b256 | .2159 | .1808 | .0854 | .0058 |
+| r3_corr_b256 | .2207 | .1851 | .0842 | .0004 |
+| r3_var_b256 | .1806 | -.1040 | .0671 | -1.0769 |
+| r3_corrvar_b256 | .1886 | -.0230 | .0690 | -.4953 |
+
+The correlation term moved train pairing +.005 (+2% relative) and train COD
++.004 -- correct direction, negligible magnitude, zero transfer. Combined with
+B1 this says the LPS train ceiling (~.22) is a property of the sparse
+6619-gene matrix, not something this loss family fixes at z=100.
+
+### Finding B3: COD is far more volatile than paired Pearson2
+
+atlas human OOD: pairR2 .3533 (m1) vs .3569 (m2) -- nearly identical -- while
+COD swings -.3049 vs +.2278, a .53 gap on near-identical data. Paired Pearson2
+is scale-invariant and stable; COD is amplitude-sensitive and, at n~183-201
+cells, unstable. Report both, but do not rank on COD from small slices.
+
+### Finding B4: marker enrichment is real but much weaker on the atlas
+
+Ratio of marker paired-Pearson2 to all-other-gene paired-Pearson2:
+
+  LPS rat LPS6, top-100 DEGs      .3301 / .0808 = 4.09x
+  atlas m1 human OOD (target)     .4769 / .3323 = 1.44x
+  atlas m2 human OOD (target)     .4974 / .3343 = 1.49x
+  atlas mouse OOD (source)        ~1.00x  (no enrichment)
+  atlas train                     ~1.02x  (no enrichment)
+
+Enrichment appears only in the target condition the markers were defined on,
+which is the expected direction. The LPS AE is far more selective: it keeps
+almost nothing except the strong responders. The atlas AE preserves most genes
+moderately well, so markers stand out less.
+
+Caveat: atlas OOD slices are 182-201 cells, so their shuffled null is ~.005
+(~1/n) rather than LPS's ~.0001, and all atlas OOD numbers are noisier.
+
+### What Track B implies
+
+Round 4 on LPS is now hard to justify: the LPS ceiling is in-sample, and an
+explicit term aimed at it moved train pairing by +.005. The generalization
+question -- the one that actually matters for transport -- is better posed on
+the atlas, where train identity is already .82 and the interesting gap is
+.82 -> .35.
+
+## Composition- and size-controlled group breakdown (job 35543634)
+
+Every group evaluated at n=180 cells, 5 draws, so composition and sample size
+are both controlled. Script: scgen-cellot-ablation/scripts/10_identity_group_breakdown.py
+(sbatch/lps/identity_group_breakdown.sbatch).
+
+### CORRECTION to the Track B framing above
+
+Track B compared a MIXED train slice against SINGLE held-out groups. That is
+the same between-group vs within-group confound that sank the Round-3
+correlation term, and it inflated the apparent generalization gap. Controlled
+numbers:
+
+| dataset | mixed (seen cells) | seen single groups | held out | composition effect | generalization effect |
+|---|---:|---:|---:|---:|---:|
+| LPS | .2347 | .1076 [.094-.139], k=7 | .1001 | +.1271 | +.0074 |
+| atlas m1 | .7659 | .4818 [.424-.541], k=14 | .3214 human / .1956 mouse | +.2840 | +.2233 |
+| atlas m2 | .7746 | .4744 [.405-.531], k=14 | .3256 human / .1911 mouse | +.3002 | +.2161 |
+
+### Finding C1: LPS has NO paired-identity generalization deficit
+
+Full LPS group ranking at n=180:
+
+  rat|unst      seen      .1387
+  pig|LPS6      seen      .1086
+  mouse|LPS6    seen      .1061
+  pig|unst      seen      .1061
+  rabbit|LPS6   seen      .1023
+  rat|LPS6      HELD OUT  .1001   <- rank 6 of 8, inside the seen range
+  rabbit|unst   seen      .0975
+  mouse|unst    seen      .0937
+
+Per-group SDs are .001-.007, so the held-out group is statistically
+indistinguishable from the seen groups. The earlier "train .225 -> held-out
+.086 = generalization failure" reading was almost entirely composition.
+
+What is actually low on LPS is WITHIN-group paired identity everywhere (~.10),
+seen or unseen. That is a data property (sparse 6619-gene matrix), not a
+holdout effect. There is therefore nothing holdout-specific left to fix on LPS,
+which retires Round 4 completely.
+
+### Finding C2: pattern generalizes, amplitude does not
+
+The same LPS table in COD:
+
+  all 7 seen groups   COD +.0411 to +.0657
+  rat|LPS6 HELD OUT   COD -.0232   <- the ONLY negative, clearly outside range
+
+So on held-out cells the AE preserves WHICH cells are high just as well as on
+seen cells (paired Pearson2, scale-invariant: no deficit) but gets the
+MAGNITUDES wrong (COD, scale-sensitive: clear deficit).
+
+This dissociation explains Round 3 exactly:
+  - the correlation loss is scale-invariant, so it targeted the axis that was
+    already fine on held-out data -> no effect;
+  - the variance loss targeted the broken axis (amplitude) but globally and
+    bluntly -> moved distribution metrics, wrecked COD.
+
+### Finding C3: the atlas gap is real, and species-asymmetric
+
+Unlike LPS, atlas held-out groups fall clearly below the seen range:
+  seen mouse .464 / seen human .499 (m1)
+  held-out human .321 (deficit .178), held-out mouse .196 (deficit .268)
+
+Training-set size does not explain it (seen-group log n vs pairR2 r = +.28,
+n range 187-613). The species asymmetry is ~.035 among seen groups but ~.126
+among held-out groups, so it is specific to unseen cell types.
+
+Atlas COD: seen +.32 mean, held-out human -.27/-.33, held-out mouse +.04.
+
+### Where this points
+
+The actionable failure is AMPLITUDE CALIBRATION on unseen cells, not pattern
+learning. Next block (all inference-only on existing checkpoints):
+
+  E1  Quantify the bias: per-gene slope of true vs reconstructed on held-out
+      cells versus seen groups; is it systematic shrinkage?
+  E2  Seen-fit recalibration: estimate per-gene affine (a_g, b_g) on SEEN
+      cells ONLY, apply to held-out reconstructions, recompute the five-axis
+      panel + reconstruction MMD. Tests calibration vs representation.
+  E3  If E2 works, apply the same seen-fit calibration to TRANSPORT
+      predictions and recompute Fig-5 all-gene/DEG R2 and decoded MMD.
+
+E2/E3 carry no leakage risk as long as (a_g, b_g) are fit on seen cells only.
+
+## E1/E2 amplitude calibration (job 35547048, inference only)
+
+Script: scgen-cellot-ablation/scripts/11_amplitude_calibration.py
+(sbatch/lps/amplitude_calibration.sbatch). Held-out cells at n=180, 5 reps.
+
+### Reporting bug found and fixed
+
+E1's first output reported a per-gene slope median of exactly 1.000 for every
+held-out group. That was an artifact: fit_affine falls back to a=1 for genes
+whose reconstruction is (near) constant, and those genes dominated the median.
+The script now reports the slope over identifiable genes only, plus the
+fraction that fall back. Do not cite the "slope ~ 1.0" numbers from the first
+run; the informative E1 statistic is the variance ratio below.
+
+### E1: the failure is variance collapse, not a shrinkage slope
+
+Median per-gene ratio of reconstructed variance to true variance, within group:
+
+  LPS seen groups (k=7)          0.018
+  LPS rat|LPS6 held out          0.040
+  atlas seen groups (k=14)       0.156-0.158
+  atlas CL:0000875|human OOD     0.222-0.229
+  atlas CL:0000875|mouse OOD     0.000  (median gene has NO reconstructed variance)
+
+The LPS decoder retains ~2-4% of within-group variance; the atlas decoder
+~16-23% on human and essentially none on the median mouse OOD gene. This is
+why within-group paired identity is low everywhere on LPS: there is almost no
+reconstructed variation to correlate. Note the paired-Pearson2 values are
+averaged only over genes where the reconstruction does vary, so they describe
+a minority of genes on the collapsed slices.
+
+CORRECTION (2026-07-30). The variance ratios above are medians over ALL genes,
+including genes that have no true variance in that slice, so they understate
+retention. This is the same fallback-dominates-the-median bug E1 itself caught
+and fixed for the per-gene slope; the fix was never applied to the variance
+ratio.
+
+Mechanism, verified in code: 11_amplitude_calibration.py computes
+  np.median(Hg.var(0) / np.maximum(Xg.var(0), 1e-12))
+over every gene (lines 217-223). A gene not expressed anywhere in the slice has
+var_true == 0 and var_recon == 0, so it enters the median as a hard 0 -- the
+decoder is charged with failing to reconstruct variance that was never there.
+stage0_metric_helpers.pergene_table instead sets variance_retention_ratio to NaN
+where true_var <= EPS (EPS = 1e-12, lines 148-150), so the audit's median over
+recon_identity_pergene.csv skips those genes.
+
+Recomputed both ways from the audit sidecars
+(atlas-paper-vae/results/atlas_paper_vae_{m1,m2}_v08_ood/recon_identity_pergene.csv,
+same cells for both columns; script kept in /tmp, not committed):
+
+| slice | median, all genes | median, genes with true variance | frac genes with no true variance |
+|---|---:|---:|---:|
+| m1 mouse OOD | .0000 | .0278 | .327 |
+| m1 human OOD | .2387 | .2883 | .166 |
+| m1 train subsample | .8382 | .8382 | .000 |
+| m2 mouse OOD | .0000 | .0679 | .311 |
+| m2 human OOD | .2522 | .3037 | .143 |
+| m2 train subsample | .8343 | .8343 | .000 |
+
+The all-gene column reproduces E1 (.000 mouse exactly; .2387/.2522 human vs the
+.229/.222 logged, the small gap being E1's 2000-cell group subsample vs the
+audit's 183/201 OOD-split cells). So the cause is confirmed. Read the corrected
+medians as:
+
+  atlas mouse OOD    .028 (m1) / .068 (m2)   NOT .000
+  atlas human OOD    .288 (m1) / .304 (m2)   NOT .222-.229
+  atlas train        .838 (m1) / .834 (m2)
+
+Do not repeat the parenthetical "median gene has NO reconstructed variance". It
+overstates the result: it is an artifact of 32.7% (m1) / 31.1% (m2) of genes
+being silent in the mouse OOD slice. The qualitative conclusion is unchanged and
+still severe -- among genes that DO vary, 38.2% (m1) / 33.2% (m2) still get
+exactly zero reconstructed variance, and the median retention is 2.8% / 6.8% --
+4-10x worse than the same model's human OOD slice and 12-30x worse than train.
+Mouse OOD reconstruction is severely collapsed; it is just not literally zero.
+
+LPS: the two groups with a per-gene sidecar on disk
+(scgen-cellot-ablation/results/stage0/recon_identity_pergene.csv, identical
+slice definitions to E1's groups) are barely affected, because only 0.5-0.9% of
+the 6619 genes are silent there: rat|LPS6 .0386 -> .0392, rat|unst .0390 ->
+.0393, train subsample .0964 (unchanged). So the "~2-4%" LPS headline stands.
+The one LPS group that likely IS affected is rabbit|unst, logged at exactly
+.000 -- the same signature -- but no per-gene artifact exists for it, so it was
+not quantified. The E1 seen-group summary .018 is a mean across the 7 seen
+groups and therefore inherits whatever that .000 hides.
+
+### E2: seen-fit calibration does NOT transfer; an oracle affine would fix a lot
+
+| dataset / held-out group | var ratio | COD raw | COD seen-fit | COD oracle (LEAKY) |
+|---|---:|---:|---:|---:|
+| LPS rat\|LPS6 | .040 | -.0212 | -.0720 | +.0719 |
+| atlas m1 CL:0000875\|human | .229 | -.1015 | -.1015 | +.2832 |
+| atlas m1 CL:0000875\|mouse | .000 | +.0405 | +.0441 | +.1236 |
+| atlas m2 CL:0000875\|human | .222 | -.2288 | -.1941 | +.2787 |
+| atlas m2 CL:0000875\|mouse | .000 | +.0359 | +.0359 | +.1248 |
+
+Per-gene affine coefficients estimated on SEEN cells and applied to held-out
+reconstructions produce no improvement, and on LPS make COD worse
+(-.021 -> -.072). The oracle correction, fit on the held-out cells themselves,
+moves every group's COD positive and cuts MSE (LPS .0476 -> .0400; atlas human
+.1735 -> .1617).
+
+Sanity check passed: paired Pearson2 is identical across all three calibration
+arms (LPS .0989 in each), exactly as expected for an affine-invariant metric.
+
+Reading: the held-out amplitude deficit IS affine-correctable in principle, but
+the required correction is GROUP-SPECIFIC and cannot be learned from the seen
+groups. So it is not a global decoder-calibration bug that a post-hoc fix
+removes.
+
+### E3 as now motivated (not yet run)
+
+In the transport setting the source cells of the held-out cell type ARE
+observed -- we see mouse OOD and predict human OOD. So a per-gene calibration
+estimated on the OBSERVED source group and transferred to the PREDICTED target
+group is legitimate (inputs, not targets). That is the only non-leaky version
+of the oracle result, and it is the natural next test: does source-estimated
+calibration improve decoded MMD and the Fig-5 metrics?
+
+## E3 source-estimated calibration of transport predictions (jobs 35558027, 35560653)
+
+Script: scgen-cellot-ablation/scripts/12_transport_calibration.py
+(sbatch/lps/transport_calibration.sbatch). Uses SAVED predictions
+(fig5_two_path.h5ad, pred_single_species_delta.h5ad); no AE or transport retrain.
+
+Note on --seed: it seeds the MMD subsampling only. Nothing in E3 is retrained,
+so a "seed sweep" here is a metric-noise replication, not a training-seed
+replication. See specs/e3_devar_confirmation.yaml.
+
+Corrections, all estimated from the OBSERVED source cells only:
+  source_affine  per-gene OLS X_src ~ a*recon_src + b, applied to the prediction
+  source_devar   per-gene variance de-attenuation, 1/sqrt(var(recon)/var(true)),
+                 capped at 5x, PRESERVING the prediction's own gene means
+  oracle_devar   same but attenuation measured on the held-out target pair
+
+### Frame correction (first run was wrong)
+
+The first run scored corrected predictions against UNCALIBRATED floor/ceiling.
+That let a corrected prediction score below the floor (LPS model/floor 0.65) and
+produced a meaningless fgc of +2.99. Corrected predictions are now scored against
+references carrying the SAME correction. The correction improves the references
+too:
+
+  LPS      floor .1130 -> .0380   ceiling .1330 -> .0544
+  atlas m1 floor .0495 -> .0388   ceiling .2117 -> .1168
+  atlas m2 floor .0433 -> .0416   ceiling .2012 -> .1138
+
+Also relabelled: oracle_devar matches the target's VARIANCE, which is not the
+same as minimizing MMD. It is a reference point, not an upper bound -- and in
+fact source_devar beats it on the atlas (1.31 vs 1.65 model/floor on m1).
+
+### Results (each variant scored in its own frame)
+
+| cut | variant | r2_all | r2_markers | mmd | model/floor | fgc | mean JS |
+|---|---|---:|---:|---:|---:|---:|---:|
+| LPS | raw | .9067 | .7423 | .2018 | 1.79 | -3.458 | .2727 |
+| LPS | source_affine | .9102 | .6792 | .1703 | 4.49 | -7.047 | .3569 |
+| LPS | source_devar | .9067 | .7423 | .0734 | 1.93 | -1.157 | .2036 |
+| atlas m1 | raw | .8045 | .6117 | .1288 | 2.60 | .511 | .1085 |
+| atlas m1 | source_affine | .6154 | .2258 | .1349 | 3.48 | -.232 | .2607 |
+| atlas m1 | source_devar | .8045 | .6117 | .0507 | 1.31 | .847 | .1484 |
+| atlas m2 | raw | .8032 | .5851 | .1226 | 2.83 | .498 | .1114 |
+| atlas m2 | source_devar | .8032 | .5851 | .0500 | 1.20 | .884 | .1506 |
+
+### Finding E3a: de-attenuation is free on the mean program, by construction
+
+source_devar preserves each gene's predicted mean, so r2_all and marker r2 are
+EXACTLY unchanged (.9067/.7423 on LPS, .8045/.6117 on m1). Any distributional
+gain therefore costs nothing on the paper metrics. This is the property the
+Round-3 variance loss did not have -- that one changed means and wrecked COD.
+
+### Finding E3b: it works on the atlas, not on LPS
+
+atlas m1 model/floor 2.60 -> 1.31, fgc .511 -> .847
+atlas m2 model/floor 2.83 -> 1.20, fgc .498 -> .884
+LPS      model/floor 1.79 -> 1.93, fgc -3.458 -> -1.157
+
+On the atlas the corrected prediction moves genuinely closer to its own
+calibrated floor. On LPS the absolute MMD falls 64% (.2018 -> .0734) but the
+floor falls further, so RELATIVE performance does not improve; and the LPS
+denominator is .0164, ill-conditioned by our own 5.9 rule, so model/floor is the
+statistic to read there. That is consistent with the earlier flat-ratio result:
+on LPS the transport map, not the AE, is the binding constraint.
+
+### Finding E3c: source_affine is the wrong correction
+
+It shifts predicted gene means (the b_g term) and collapses marker r2 on the
+atlas (.6117 -> .2258). Mean-preserving de-attenuation is the correct form.
+
+### Finding E3d: multivariate and marginal metrics disagree on the atlas
+
+MMD improves substantially while mean JS worsens (.1085 -> .1484 on m1,
+.1114 -> .1506 on m2). On LPS JS improves (.2727 -> .2036). So on the atlas the
+correction fixes joint structure while making per-gene marginals slightly worse.
+Report both; do not claim a clean distributional win on the atlas.
+
+### Status
+
+This is the first intervention in the whole study that improves a transport
+distribution metric at zero cost to the paper mean metrics, and it needs no
+retraining. It is a post-hoc decoder correction, single seed, on saved
+predictions. Before any claim: repeat across seeds, and check whether it
+survives on the hub AE-scGen / IMPACT v08 runs rather than only the paper VAE.
+
+Preregistered as specs/e3_devar_confirmation.yaml (2026-07-29). Phase A is
+metric-noise replication (5 MMD seeds x ncells 30/50/80 x cap 2/5/10) plus two
+falsification controls the original run lacks: a gene-label-PERMUTED devar and a
+single global scalar devar. If a permuted scale vector recovers most of the MMD
+gain, E3 is generic variance inflation rather than per-gene calibration and the
+line stops there. Phase B (gated on A) tests transfer to the hub scgen and
+impact_cellot v08 runs via a new devar_frame_metrics.csv sidecar.
+
+## Phase A of E3 confirmation: atlas cuts DONE, A1 control FAILS (job 36153557)
+
+Spec: specs/e3_devar_confirmation.yaml. Script:
+scgen-cellot-ablation/scripts/13_devar_confirmation.py
+(sbatch/lps/devar_confirmation.sbatch). Inference only.
+3 caps (2/5/10) x 5 MMD seeds x ncells 30/50/80 x 15 variants. All three tasks
+COMPLETED (atlas ~28 min each, LPS 1h58m, peak RSS 8.7 GB on LPS).
+
+### The effect replicates, and it is NOT per-gene calibration
+
+Headline cell (cap 5, ncells 80), model/floor:
+
+| cut | raw | source_devar | permuted (A1) | global scalar (A2) | permuted share of gain |
+|---|---:|---:|---:|---:|---:|
+| m1 | 2.63-2.74 | 1.283-1.313 | 1.492-1.528 | 1.482-1.518 | .837-.856 |
+| m2 | 2.65-2.80 | 1.195-1.244 | 1.388-1.450 | 1.485-1.563 | .858-.873 |
+
+Gate outcomes, both cuts:
+- A3 identity: PASS. r2_all/r2_markers move by <6e-10, so "free on the paper
+  mean metrics" is confirmed exactly as claimed.
+- devar improves model/floor in 5/5 seeds, and the direction holds at cap 2 and
+  cap 10. So the improvement itself is real and reproducible, not MMD noise.
+- A1 permuted control: FAIL. Median share of gain .852 (m1) / .870 (m2)
+  against a pre-declared .50 threshold. Seed spread is +-.01, far too tight to
+  be noise.
+
+### Interpretation
+
+A scale vector with the GENE LABELS SHUFFLED recovers ~85-87% of the model/floor
+improvement, and a single global scalar recovers about as much. So E3 is
+approximately "multiply the prediction's per-gene spread by ~2.2", and only
+~13-15% of the effect is attributable to per-gene calibration. The E3b framing
+("source-estimated calibration works on the atlas") overstates the mechanism:
+what works is variance inflation, which happens to be free on the mean program
+because it is mean-preserving.
+
+This does not retract the improvement, which is robust. It retracts the
+explanation. The honest claim is: the paper VAE's decoded predictions are
+globally under-dispersed, and inflating their spread moves them closer to the
+target under MMD; estimating the inflation per gene from the source adds little.
+
+### LPS makes the same point more sharply (5/5 seeds, cap 5, ncells 80)
+
+| seed | raw | source_devar | permuted (A1) | global scalar (A2) |
+|---|---:|---:|---:|---:|
+| 0 | 1.788 | 1.925 | 1.189 | 0.951 |
+| 1 | 1.792 | 1.933 | 1.211 | 0.968 |
+| 2 | 1.740 | 1.902 | 1.232 | 0.978 |
+| 3 | 1.870 | 2.007 | 1.202 | 0.954 |
+| 4 | 1.772 | 1.899 | 1.201 | 0.964 |
+
+A3 passes (7.9e-10). source_devar improves in 0/5 seeds, reconfirming E3b. But
+the PERMUTED vector (1.19-1.23) and the GLOBAL SCALAR (0.95-0.98) both beat raw
+AND beat the real per-gene correction, in every seed. So on LPS the per-gene
+assignment is not merely unhelpful, it is actively worse than shuffling it.
+
+Read the global-scalar values below 1.0 as a strained frame, not as a model that
+beats perfect reconstruction: model/floor < 1 means the correction helped the
+prediction more than it helped the floor cloud. Flag, do not rank.
+
+### Combined verdict across all three cuts
+
+The per-gene structure of the source-estimated correction is not what produces
+the improvement. Atlas: shuffling gene labels retains 85-87% of the gain. LPS:
+shuffling is strictly better than not shuffling. What helps is inflating the
+predicted per-gene spread at roughly the right overall magnitude, which is free
+on the paper mean metrics only because the operation is mean-preserving.
+
+Per the spec, Phase B (transfer to hub scgen / impact_cellot v08) is NOT
+submitted. The E3 line is closed: report it as an under-dispersion correction of
+unclear mechanism, not as source-estimated per-gene calibration.
+
+### Two measurement traps found along the way
+
+1. A2 as first written was a silent no-op: the median of the devar scale vector
+   over ALL genes returns the 1.0 fallback whenever most genes are
+   unidentifiable, and 56.6% of atlas m1 source genes are (median attenuation
+   over all genes is 0.000; over identifiable genes it is 0.206, giving a median
+   scale of 2.20). Same trap as E1's spurious "slope ~ 1.000". Summaries of the
+   scale vector must be taken over identifiable genes only, and frac_fallback is
+   now reported in the sidecar.
+2. oracle_devar scores WORSE than source_devar (2.32 vs 1.29 on m1 seed 0),
+   reconfirming that matching the target's variance is not the same as
+   minimizing MMD. It is a reference point, not a ceiling.
+
+## Artifacts
+
+- `specs/lps_scgen_ae_followup.yaml`
+- `scgen-cellot-ablation/results/stage0_ae_followup/round1_summary.csv`
+- `scgen-cellot-ablation/results/stage0_ae_followup/round1_decision.json`
+- per-run `metrics.json`, `recon_identity_extended.json`,
+  `recon_identity_pergene.csv`, `recon_identity_percell.csv`
+- canvas `scgen-ae-followup-round1-metrics`

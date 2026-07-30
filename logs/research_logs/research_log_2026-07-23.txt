@@ -1,0 +1,133 @@
+# Research log — 2026-07-23
+# scGen Figure 5 Stage-0 code + reconstruction audit
+# Canvas: scgen-fig5-stage0-metrics
+
+## Decision
+
+Unbalanced OT stays paused.
+
+The Stage-0 metric code is not the explanation for the low identity score. The
+paper replication is faithful, and the reconstruction metrics reproduce to
+numerical precision. The VAE is not a random-number generator: it preserves
+gene means and broad cell profiles while strongly shrinking cell-specific
+variation. The accurate description is:
+
+> Paper scGen is a mean-preserving denoiser but a weak paired-cell identity map,
+> especially for the held-out rat-LPS6 slice.
+
+If full-cloud fidelity is required, a bounded AE repair study is warranted
+before adding an unbalanced-OT degree of freedom.
+
+## Paper replication: both gates pass
+
+Frozen TF1 VAEArith checkpoint:
+- data: Hagai 62,114 cells × 6,619 one-to-one orthologs
+- train excludes rat LPS6; rat unstimulated remains in train
+- architecture: 6619-800-800-100-800-800-6619
+- alpha=5e-5, dropout=0.2, lr=1e-3, 300 epochs
+
+Two-path prediction:
+- all-gene mean Pearson²: 0.906739 (paper notebook 0.910167)
+- top-100 rat-LPS Wilcoxon-DEG mean Pearson²: 0.7423
+  (paper notebook 0.742091)
+- identity rat-unst vs rat-LPS mean Pearson²: 0.866738
+
+The missing DEG headline was the only paper-metric gap. The paper uses 100
+DEGs, not 50.
+
+## Reconstruction audit (deterministic decode(mu(X)))
+
+Metric axes:
+- paper R²: Pearson² across gene-mean vectors
+- legacy recon r²/gene: for each gene, Pearson² across paired cells; mean genes
+- COD/gene: standard 1-SSE/SST across paired cells; mean genes
+
+| Slice | MSE | paired-cell Pearson²/gene | COD/gene | mean-vector Pearson² | per-cell r |
+|---|---:|---:|---:|---:|---:|
+| train subsample | 0.07685 | 0.2253 | 0.1554 | 0.9976 | 0.820 |
+| rat unst (seen) | 0.04359 | 0.1235 | 0.0660 | 0.9971 | 0.891 |
+| rat LPS6 (held out) | 0.04823 | 0.08618 | -0.01991 | 0.9590 | 0.877 |
+
+Held-out calibration:
+- shuffled-reconstruction Pearson²/gene: ~0.000097
+- AE margin above shuffled: +0.08608
+- AE MSE gain vs train-gene-mean predictor: 49.7%
+- AE MSE gain vs zero predictor: 80.2%
+- COD median: -0.0047; mean: -0.0199
+- explained-variance mean: +0.0357
+- reconstruction MMD@80: ~0.113
+
+Therefore 0.086 is low but decisively above a pairing-null. The negative mean
+COD says that, averaged equally over genes, deterministic reconstruction does
+not beat each gene's own mean predictor on held-out cell-specific squared
+error. Simultaneously, high mean-vector Pearson² and per-cell correlation say
+the decoder preserves broad expression programs.
+
+## What the before/after plots show
+
+- The decoder fills zeros: held-out rat-LPS zero fraction drops from ~73.8% in
+  true X to ~45.2% after round-trip.
+- Positive values are shifted toward a narrower, lower-expression range.
+- Per-gene variance is broadly compressed below the identity line.
+- Top LPS DEGs retain ordering for some genes but their marginals and means are
+  visibly attenuated.
+- The held-out per-gene Pearson² distribution is concentrated near zero, while
+  cell-wise correlations across genes remain high. These are different axes,
+  not contradictory results.
+
+Figures:
+- results/stage0/audit_figures/01_expression_histograms.png
+- results/stage0/audit_figures/02_pergene_pearson_r2.png
+- results/stage0/audit_figures/03_gene_mean_scatter.png
+- results/stage0/audit_figures/04_gene_variance_scatter.png
+- results/stage0/audit_figures/05_percell_diagnostics.png
+- results/stage0/audit_figures/06_top_deg_histograms.png
+
+## Code audit findings
+
+No local metric bug found:
+- vectorized per-gene Pearson² matches an explicit scipy loop
+- perfect identity, shuffled-cell, gene-mean, constant-gene, affine-rescaling,
+  and misordered-gene synthetic tests pass
+- reconstruction values reproduce the pre-audit artifact
+- decoded MMD components reproduce; the very negative fraction is driven by
+  model MMD ~0.201, decoded ceiling ~0.135, floor ~0.112, hence a tiny usable
+  denominator (~0.023), not an arithmetic error
+
+Important upstream/model quirks:
+1. `VAEArith.to_latent` returns a sampled z=mu+sigma*epsilon despite its name.
+   Paper transport uses this sampled path; identity audit uses deterministic mu.
+   Five sampled-z repeats are nearly unchanged, so sampling does not explain the
+   weak identity.
+2. The second decoder batch-normalization call in the vendored TF code does not
+   assign its return value back to `h`. The frozen checkpoint was trained with
+   this upstream behavior. Fixing it now would define a different model and
+   cannot explain a local evaluation-code error.
+3. Paper arithmetic uses an index array sized from mouse populations when
+   indexing rat controls. Stage 0 preserves this for fidelity; changing it would
+   be a new prediction recipe, not a correction to identity reconstruction.
+4. Latent-frame MMD mixes sampled transport latents with deterministic-mu
+   references. Treat it as a sensitivity diagnostic, not the headline.
+
+## Bounded next study (only if approved)
+
+Do not restart open-ended HPO. Freeze this Stage-0 dataset, split, seed, and
+metric panel. Compare a small preregistered set of reconstruction models using:
+- held-out COD/gene and paired-cell Pearson²
+- variance retention and zero-fraction calibration
+- decoded reconstruction MMD
+- paper all-gene + top-100 DEG transport gates
+
+An AE candidate must improve cell/cloud identity without losing the replicated
+mean-program result. Only after that gate should transport variants resume.
+
+## Artifacts
+
+- `scgen-cellot-ablation/results/stage0/metrics_pre_audit_20260723.json`
+- `scgen-cellot-ablation/results/stage0/metrics.json`
+- `scgen-cellot-ablation/results/stage0/audit_manifest.json`
+- `scgen-cellot-ablation/results/stage0/recon_identity_extended.json`
+- `scgen-cellot-ablation/results/stage0/recon_identity_pergene.csv`
+- `scgen-cellot-ablation/results/stage0/recon_identity_percell.csv`
+- `scgen-cellot-ablation/results/stage0/recon_identity_sampled_clouds.npz`
+- audit job: 34700587 (COMPLETED, 8m13s, peak RSS ~6.6 GB)

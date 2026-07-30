@@ -1,5 +1,10 @@
 # Connect Cursor to OOD Compute Node (instead of login node)
 
+> **Archived 2026-07-27 — superseded by [`docs/cursor_fasrc_setup.md`](../cursor_fasrc_setup.md).**
+> The replacement covers the same ProxyJump setup plus the SSH-key step this note omits, a
+> dynamic host that removes the per-session `HostName` edit below, and the cluster-side
+> settings (sandbox, file watcher, home quota) that this note predates.
+
 When you start a Jupyter/OOD session, the job runs on a **compute node** (e.g. `holy7c04205.rc.fas.harvard.edu`). Cursor can use that node via SSH so you get full compute resources instead of the limited login node.
 
 ## 1. Get the compute node hostname from Open OnDemand

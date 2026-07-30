@@ -1,0 +1,699 @@
+# Research log — 2026-07-30
+# Repo reconciliation plan: hand a working checkout to Joshua Price
+# Status: PLAN ONLY. Nothing in this plan has been executed. No git state was
+#         mutated while writing it (read-only git commands only).
+
+Trigger: the project is entering a new phase. Models trained on the Tabula
+human-mouse atlas will be tested against an external BCG vaccine dataset, and
+the mentor will be RUNNING predictions rather than training. He has never
+worked in this repository. It has not been synced in ~5 weeks.
+
+
+===============================================================================
+## 0. HEADLINE FINDINGS (read these three first)
+===============================================================================
+
+FINDING 1 — There is no merge. The histories are UNRELATED.
+
+    git merge-base main josh/main   ->  (empty), exit 1
+
+  `main` root commit:      c342331  2026-05-15  "Tier 1 repository reorganization"
+  `josh/main` root commit: f58db11  2024-06-15  "Initial commit"
+
+  The "39 / 75" from `git rev-list --left-right --count HEAD...josh/main` is NOT
+  "39 ahead / 75 behind after a shared ancestor". With no merge base, that
+  command degenerates to the total commit count on each side:
+      git rev-list --count main       = 39
+      git rev-list --count josh/main  = 75
+  This repo was created with a fresh `git init` on 2026-05-15, not cloned from
+  the mentor's. Any "merge josh/main into main" requires
+  `--allow-unrelated-histories` and is a tree union, not a code reconciliation.
+
+FINDING 2 — The local `josh/main` remote-tracking ref is STALE.
+
+    git ls-remote --heads josh   ->  refs/heads/main = 8f0a7d82...
+    git rev-parse josh/main      ->  f0585b44...
+    git cat-file -t 8f0a7d82...  ->  fatal: could not get object info
+
+  The real josh/main has advanced past what is on disk, and the new commits are
+  not in the local object database. Everything in section 2 below therefore
+  describes josh/main AS OF THE LAST FETCH (tip f0585b4, 2026-06-22). The mentor
+  has pushed since. FIRST ACTION for the human: `git fetch josh` (safe, only
+  updates remote-tracking refs), then re-read section 2.
+  josh/cellot (544aef8) and mine/main (0722d83) DO match their remotes.
+
+FINDING 3 — The one change that will break the mentor's checkout.
+
+  `speciesOT/hub/cli.py` is modified (uncommitted) and now does an unconditional
+  top-level import at cli.py:48:
+
+      from speciesOT.hub.lps import (...)
+
+  `speciesOT/hub/lps.py` is UNTRACKED. If cli.py is committed without lps.py,
+  then EVERY `./hub` command dies at import — `list`, `scorecard`, `show`,
+  `generate`, `metrics`, all of it. The hub is the documented entry point in
+  AGENTS.md. Committing these two files together is not optional.
+
+
+===============================================================================
+## 1. CURRENT STATE (verified 2026-07-30)
+===============================================================================
+
+Branches / remotes
+------------------
+  * main   0722d83 [mine/main]  -> github.com/JunyiZhou-Conny/speciesOT.git
+    cellot 544aef8 [josh/cellot] -> github.com/JoshuaPrice/speciesOT.git
+                                    (checked out in a second worktree at
+                                     /n/holylabs/.../speciesOT-cellot)
+
+  git worktree list:
+    /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT         0722d83 [main]
+    /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT-cellot  544aef8 [cellot]
+
+  .git is 218 MB.
+
+Three distinct code lineages
+----------------------------
+  A. josh/main   (75 commits, 36 files, 2024-06-15 .. 2026-06-22)
+     The mentor's own exploration repo. Flat top-level notebooks e1..e20,
+     phylogeny/ (4 nb), tb/ (tb1_mouse_setup.ipynb, tb2_human_setup.ipynb),
+     speciesot_helpers.py, speciesot_simulation_helpers.py, pytorch_helpers.py,
+     notebook_descriptions.md, README.md, .gitignore.
+     NOTE: tb/ is the BCG/TB data setup. That is directly relevant to the new
+     phase and is NOT present anywhere in `main`.
+
+  B. josh/cellot (79 commits; 23 of them not in josh/main; tip 2026-06-02)
+     Branched off josh/main at a7f7301 (2026-02-25). This is where Junyi's work
+     was contributed BEFORE the fresh init. Contains baseline/ (70 files) and
+     scripts/ (14 files). This is the only branch that shares real history with
+     the mentor's repo AND contains Junyi code.
+
+  C. main / mine/main (39 commits, 559 files, 2026-05-15 .. 2026-06-22)
+     The modern repo: docs/ (226), speciesOT/ (205), cellot/ (93), scripts/ (15),
+     logs/ (10), specs/ (3), AGENTS.md, hub. Unrelated history to A and B.
+
+Tree overlap
+------------
+  main  <->  josh/main    : 1 shared path   (.gitignore only)
+  main  <->  josh/cellot  : 12 shared paths (.gitignore + 11 files in scripts/)
+
+Uncommitted: 25 paths (8 tracked-modified, 17 untracked).
+
+
+===============================================================================
+## 2. PATH-BY-PATH CLASSIFICATION
+===============================================================================
+
+Legend: C = commit | G = add to .gitignore | A = archive (git mv to _archive/)
+        H = needs a human decision
+        Several paths are SPLIT (part C, part G) — those are counted once, in
+        the bucket of their dominant action, and flagged SPLIT.
+
+What .gitignore already covers (relevant subset)
+------------------------------------------------
+  __pycache__/, *.py[cod], .ipynb_checkpoints/, *.egg-info/, *.log, *.sqlite
+  *.h5ad                                   (global)
+  cellot/cellot_gpu/results/               (all trained checkpoints)
+  cellot/cellot_gpu/datasets/
+  scripts/.bcg_*.csv, scripts/.biomart_*.csv, .submitted_*.csv
+  sbatch/, offline_bundle/tier{1,2}_*/
+  scgen-reproducibility/, scgen-cellot-ablation/, scgen-cellot-autoresearch/
+  speciesOT/baseline/results/**/*.h5ad, **/*.pt, **/cache/
+  docs/model_cards/, docs/.obsidian/<ui state>, docs/*.canvas, .DS_Store
+
+  Gaps found: `*.err` and `*.out` are NOT ignored (they slip through `*.log`);
+  `.pytest_cache/` is NOT ignored; nothing covers the three new sibling stacks.
+
+TRACKED / MODIFIED (8)
+----------------------------------------------------------------------------
+ #  path                                              act  note
+----------------------------------------------------------------------------
+ 1  AGENTS.md                                          C   +52/-3. Adds the
+                                                           metric-atlas-canvas
+                                                           rule and the current-
+                                                           focus block. It links
+                                                           .cursor/skills/... and
+                                                           docs/cursor_fasrc_setup.md,
+                                                           BOTH untracked. Commit
+                                                           together or AGENTS.md
+                                                           ships dead links.
+ 2  docs/cursor-connect-compute-node.md ->             C   Staged rename already
+      docs/_archive/cursor-connect-compute-node.md         done, +5 lines. This is
+                                                           the AGENTS.md archive
+                                                           convention working as
+                                                           intended. Superseded by
+                                                           docs/cursor_fasrc_setup.md
+                                                           (path 13).
+ 3  docs/conceptual_framework.md                       C   +52. Science source of
+                                                           truth; the 2026-07-30
+                                                           variance-retention
+                                                           correction lives here.
+ 4  docs/hub_usage.md                                  C   +75/-... Documents the
+                                                           mixhvg flavor and says
+                                                           "pip install -e mixhvg-py"
+                                                           (line 270). Commit
+                                                           without mixhvg-py and
+                                                           the doc is unfollowable.
+ 5  speciesOT/baseline/analysis/                       H   +363/-183. Contains 7
+      20_m1_mmd_investigation.ipynb                        executed output cells.
+                                                           See Q4.
+ 6  speciesOT/hub/cli.py                               C   +94. Adds the whole
+                                                           `./hub lps` subcommand
+                                                           tree. HARD-COUPLED to
+                                                           path 20 (lps.py).
+ 7  speciesOT/hub/discover.py                          C   +7/-2.
+ 8  speciesOT/hub/prep.py                              C   +121. mixhvg prep path.
+
+UNTRACKED (17)
+----------------------------------------------------------------------------
+ #  path                                        size  act  note
+----------------------------------------------------------------------------
+ 9  .cursor-assets/                             5.7M   H   5 PNG slide figures
+                                                           (failure-1..5). rg finds
+                                                           ZERO references to them
+                                                           anywhere in the repo.
+                                                           Default: gitignore. See Q3.
+10  .cursor/                                     13K   C   SPLIT.
+     .cursor/skills/metric-atlas-canvas/               C   COMMIT. AGENTS.md:87
+       SKILL.md, reference.md                              links this path. 12 KB
+                                                           of text, 2 files.
+     .cursor/sandbox.json                              G   IGNORE. Per-machine
+                                                           Cursor state, content is
+                                                           {"type":"insecure_none"}.
+                                                           Rule: `.cursor/sandbox.json`
+                                                           (NOT `.cursor/` wholesale
+                                                           — that would re-hide the
+                                                           skill).
+11  atlas-paper-vae/                             93M   C   SPLIT. Plan-C TF VAE
+                                                           stack. NO nested .git.
+                                                           COMMIT: README.md,
+                                                           configs/ (2.5K),
+                                                           scripts/ (61K) = ~65 KB.
+                                                           IGNORE: results/ (83M,
+                                                           incl. two 37.5 MB
+                                                           TensorFlow checkpoints
+                                                           `scgen.data-00000-of-00001`),
+                                                           data/ (11M: two 4.4 MB
+                                                           X.npz + obs/var csv),
+                                                           logs/ (228K, .out/.err).
+                                                           Referenced by paths 21-22.
+12  docs/cursor_fasrc_handout.md                 193L   C   The collaborator-facing
+                                                           Cursor+FASRC setup guide.
+                                                           THIS IS THE ONBOARDING
+                                                           DOC FOR THE MENTOR.
+                                                           Highest-value single file
+                                                           in the untracked set.
+13  docs/cursor_fasrc_setup.md                   364L   C   The deep version.
+                                                           AGENTS.md:67 already
+                                                           points at it.
+14  logs/research_logs/agent_plans_2026-07-21/    55K   C   9 markdown plan +
+                                                           deliverable files. Pure
+                                                           text. atlas-paper-vae/
+                                                           README cites
+                                                           DELIVERABLE_C_... as its
+                                                           design doc.
+15  logs/research_logs/research_log_2026-07-20.txt 79L  C   10 dated logs already
+16  logs/research_logs/research_log_2026-07-23.txt 133L C   tracked in this dir;
+17  logs/research_logs/research_log_2026-07-27.txt 766L C   these three continue the
+                                                           series. AGENTS.md's
+                                                           "current focus" points at
+                                                           the 07-27 one BY NAME, so
+                                                           it must ship.
+18  mixhvg-py/                                   201K   H   Python port of the R
+                                                           mixhvg package. NO nested
+                                                           .git. 16 non-ignored files
+                                                           = 0.1 MB (pycache,
+                                                           .pytest_cache and egg-info
+                                                           are already excluded by
+                                                           existing rules, except
+                                                           .pytest_cache — add it).
+                                                           Recommend COMMIT (hub_usage
+                                                           tells you to install it),
+                                                           but it is GPL-3 and
+                                                           mixhvg-py/NOTICE.md warns
+                                                           the hub inherits GPL if it
+                                                           becomes a hard dependency.
+                                                           See Q2.
+19  scgen-cellot-unbalanced/                     113M   C   SPLIT. Unbalanced-OT
+                                                           study. NO nested .git.
+                                                           AGENTS.md says "Unbalanced
+                                                           OT remains paused".
+                                                           COMMIT: README.md, PLAN.md,
+                                                           DELIVERABLE_D_option_a.md,
+                                                           honest_metrics.py,
+                                                           configs/, uot/, metrics/,
+                                                           scripts/, synthetic/
+                                                           = ~1.1 MB.
+                                                           IGNORE: results/ (112M).
+                                                           Note results/lps_rat/logs/
+                                                           holds 5.7M/4.7M/4.7M/1.9M
+                                                           .err files that today's
+                                                           `*.log` rule does NOT catch.
+                                                           Because the line is PAUSED,
+                                                           an alternative is (A):
+                                                           commit the code under an
+                                                           _archive/ path so the
+                                                           mentor does not mistake it
+                                                           for live work. See Q5.
+20  speciesOT/hub/lps.py                          --    C   MANDATORY, ships with #6.
+                                                           See FINDING 3.
+26  scripts/eval_external_target.py               24K   C   APPEARED MID-ANALYSIS
+                                                           (mtime 2026-07-30 16:24,
+                                                           after the git status this
+                                                           plan was built from). Not
+                                                           created by this planning
+                                                           pass. Scores a prediction
+                                                           against an EXTERNAL
+                                                           ground-truth target in the
+                                                           decoded frame — i.e. the
+                                                           missing second half of
+                                                           predict_new_input.sh, and
+                                                           squarely the new BCG phase.
+                                                           Clean: rg finds NO hardcoded
+                                                           /n/holylabs or jzhou1125
+                                                           paths in it. COMMIT, and
+                                                           reference it from the new
+                                                           README (section 5.4) as the
+                                                           mentor's scoring step. If
+                                                           other work is in flight,
+                                                           re-run `git status --short`
+                                                           before acting on this plan;
+                                                           the 25-path inventory may
+                                                           have grown again.
+21  specs/atlas_paper_vae_m1_v08.yaml             --    C   Intent source of truth
+22  specs/atlas_paper_vae_m2_v08.yaml             --    C   (AGENTS.md rule). 3 specs
+23  specs/e3_devar_confirmation.yaml              --    C   already tracked; these 5
+24  specs/lps_icnn_ae_study.yaml                  --    C   are the July work. 21/22
+25  specs/lps_scgen_ae_followup.yaml              --    C   name atlas-paper-vae/
+                                                           result_root paths.
+
+Bucket counts (26 paths — 25 at inventory time, +1 that appeared mid-analysis)
+------------------------
+  C  commit .................. 21   (of which 3 are SPLIT commit-code/ignore-data:
+                                     #10 .cursor, #11 atlas-paper-vae,
+                                     #19 scgen-cellot-unbalanced)
+  G  gitignore-only ...........  0   (no path is purely ignore; the ignore work is
+                                     inside the 3 SPLIT paths, plus the hygiene
+                                     rules in section 5)
+  A  archive ..................  0   recommended outright; #19 is an archive
+                                     CANDIDATE pending Q5
+  H  needs human decision .....  5   #5 (nb outputs), #9 (.cursor-assets),
+                                     #11 (which atlas-paper-vae artifacts),
+                                     #18 (mixhvg GPL), #19 (archive or not)
+
+  Bytes that `git add` would swallow if run naively on the untracked dirs:
+      atlas-paper-vae .............. 91.1 MB
+      scgen-cellot-unbalanced ...... 29.5 MB
+      .cursor-assets ...............  5.7 MB
+      mixhvg-py ....................  0.1 MB
+      .cursor ......................  0.0 MB
+      agent_plans_2026-07-21 .......  0.1 MB
+  -> ~126 MB, on a .git that is already 218 MB. Do NOT `git add -A`.
+
+Nested-repo check (AGENTS.md notes nested ablation repos were deliberately
+gitignored — verified for the NEW dirs):
+      find <dir> -name .git   ->  NOTHING for .cursor, .cursor-assets,
+                                  atlas-paper-vae, mixhvg-py,
+                                  scgen-cellot-unbalanced.
+  All five are plain directories. There is no submodule hazard here. The
+  pre-existing gitignore entries for scgen-reproducibility/,
+  scgen-cellot-ablation/ and scgen-cellot-autoresearch/ are unrelated dirs.
+
+
+===============================================================================
+## 3. DIVERGENCE ANALYSIS
+===============================================================================
+
+3.1 What is actually on josh/main (as of stale tip f0585b4)
+-----------------------------------------------------------
+  75 commits, 2024-06-15 .. 2026-06-22, 36 files, ALL at top level or in
+  phylogeny/ and tb/. Thematic arc:
+    2024-06 .. 2025-07  PerturbOT tutorial, tabula EDA, pig->human phylogeny
+    2025-09 .. 2025-10  cell-type sampling, PCA/sinkhorn sweeps, e1-e4
+    2026-01 .. 2026-02  simulated Gromov (e5-e8), anchoring, OTDD (e9-e13)
+    2026-03 .. 2026-04  gene correlations (e15), learning weights (e16),
+                        standard OT pairings (e17), AGW (e19)
+    2026-05 .. 2026-06  BCG/TB setup (tb1 mouse, tb2 human), batch-correction
+                        change, lab-meeting visualization (e20)
+
+  The last four months of josh/main are exactly the BCG line. `tb/tb1_mouse_setup.ipynb`
+  and `tb/tb2_human_setup.ipynb` are the mentor's BCG data preparation, and they
+  exist nowhere in `main`.
+
+3.2 What is on main
+-------------------
+  39 commits, 2026-05-15 .. 2026-06-22, 559 files. Arc:
+    2026-05-15  Tier 1 reorganization (the fresh init) + untrack large artifacts
+    2026-05-25 .. 05-27  "Walkthrough cleanup" batches 1-10
+    2026-05-28 .. 05-29  Hub v0 -> v1.1 (8 commits: cards, compare, export,
+                         spec system, generate, handoff)
+    2026-06-09  Obsidian vault scaffold + `./hub vault`; gitignore hardening
+    2026-06-11 .. 06-22  paper cross-species bundle, GPU fixes, offline manifest,
+                         nb21/nb24, AE roundtrip analysis
+
+3.3 Do they overlap?
+--------------------
+  Essentially not at all.
+    - Shared paths main <-> josh/main: 1 (.gitignore, which differs by
+      +157/-104 lines; main's is a strict superset in spirit).
+    - The mentor edits top-level .ipynb and *_helpers.py. Junyi edits
+      speciesOT/hub/, docs/, cellot/, specs/. Zero file-level contention.
+    - The 11 shared scripts/ paths are between main and josh/CELLOT, not
+      josh/main.
+
+3.4 Merge hazard verdict
+------------------------
+  MECHANICALLY ROUTINE, STRUCTURALLY HAZARDOUS.
+
+  Routine, because: with unrelated histories git treats every path as
+  added-on-one-side. Only paths present in BOTH trees can conflict, and there is
+  exactly one such path (.gitignore). A `merge --allow-unrelated-histories`
+  would produce a single textual conflict, resolvable in a minute.
+
+  Hazardous, because the result is not what anyone wants:
+    (a) It fabricates a shared ancestry that never existed, permanently. Every
+        future `git log`/`blame` on the combined repo shows two disjoint roots
+        stitched at one commit.
+    (b) It dumps 36 loose notebooks into the root of a repo whose AGENTS.md
+        "where things live" map has no slot for them. The mentor's e*.ipynb
+        expect to sit beside speciesot_helpers.py at top level; main's layout
+        would silently satisfy that (both land at root) but the resulting root
+        directory becomes 20 notebooks + 11 project dirs.
+    (c) It is being computed against a STALE josh/main. The real tip is
+        8f0a7d82, unknown content. Merging a stale ref then pushing is how you
+        clobber a collaborator.
+    (d) The `cellot` branch/worktree already IS the legitimate bridge into the
+        mentor's repo and would be bypassed.
+
+  Verdict: do not merge josh/main into main.
+
+
+===============================================================================
+## 4. RECOMMENDED STRATEGY
+===============================================================================
+
+The goal is not "one tidy history". The goal is: Joshua can clone something,
+follow one document, and produce human predictions from BCG mouse cells on HIS
+account. Optimize for that.
+
+RECOMMENDED — Option (iii): publish on mine/main, hand over by URL, and open a
+cross-repo PR only as a review artifact.
+
+  Ordering (each step is a gate; do not batch them):
+
+  S0. `git fetch josh`  (read-only w.r.t. working tree; updates tracking refs)
+      Re-run `git log --oneline f0585b4..josh/main` and re-read section 3.
+      If the new commits touch tb/ again, the mentor's BCG setup has moved and
+      the handoff doc must cite the new notebook state.
+
+  S1. Extend .gitignore FIRST, before any `git add`. Section 5.1 has the exact
+      lines. This is what stops the 126 MB accident. Verify with
+      `git status --short` and
+      `git ls-files -o --exclude-standard -z | xargs -0 stat -c'%s %n' | sort -rn | head`
+      -> nothing above ~1 MB should remain except whatever Q3 decides.
+
+  S2. Commit the atomic hub unit as ONE commit:
+        speciesOT/hub/lps.py + cli.py + discover.py + prep.py + docs/hub_usage.md
+      Then, in the same session, from a clean shell:
+        conda deactivate; ./hub list | tail -1 ; ./hub scorecard | head
+      If that fails, stop. Nothing downstream matters until `./hub` imports.
+
+  S3. Commit docs + logs as a second commit: AGENTS.md, conceptual_framework.md,
+      the archived cursor-connect doc, cursor_fasrc_setup.md,
+      cursor_fasrc_handout.md, the 3 research logs, agent_plans_2026-07-21/,
+      .cursor/skills/. Then grep AGENTS.md for its own links and confirm each
+      target is now tracked.
+
+  S4. Commit the July experiment stacks as a third commit: the 5 specs +
+      atlas-paper-vae code + (per Q5) scgen-cellot-unbalanced code +
+      scripts/eval_external_target.py (path 26).
+
+  S5. Write the ONE new document the mentor needs (section 5.4) and commit it as
+      README.md at repo root. `main` currently has NO README at all.
+
+  S6. `git push mine main`.
+
+  S7. Hand over: send the mine/main URL + the README + docs/cursor_fasrc_handout.md.
+      Tell him to clone from JunyiZhou-Conny/speciesOT, not from his own repo.
+
+  S8. Separately and optionally, push a branch to josh (e.g.
+      `git push josh main:junyi-hub-2026-07`) and open a PR josh:junyi-hub-2026-07
+      -> josh:main. Mark it "for review / do not merge". This gives the mentor a
+      GitHub-native diff to read without forcing an unrelated-histories merge
+      into his main. NEVER force-push; AGENTS.md forbids it.
+
+  Why this ordering: S1 before S2 prevents the irreversible mistake (a 37 MB
+  blob in history cannot be removed without a rewrite, which is forbidden here).
+  S2 before everything else because a broken `./hub` makes the rest untestable.
+
+  What can still go wrong:
+    - The mentor clones and runs `./hub`: it hard-codes
+      /n/home01/jzhou1125/miniforge3 (hub:16) and fails on his account. This is
+      the #1 predictable failure. Section 5.2 fixes it; treat as part of S2.
+    - He runs scripts/predict_new_input.sh: it needs checkpoints and BioMart
+      caches that are gitignored and will not be in his clone. Section 5.3.
+    - He clones to a different directory and eight modules with
+      WORKSPACE_ROOT = Path("/n/holylabs/.../junyizhou/speciesOT") silently read
+      Junyi's files instead of his. This one is worse than a crash because it
+      LOOKS like it worked. Section 5.2.
+
+ALTERNATIVE (i) — commit to mine/main only, mentor uses the fork.
+  This is S0-S7 without S8. Pros: least risk, fastest, zero chance of disturbing
+  the mentor's repo. Cons: the mentor's repo stays the "official" one while the
+  real work lives in a fork he has to remember to look at; no review surface; if
+  he later wants it in JoshuaPrice/speciesOT the problem is unchanged and older.
+  Verdict: acceptable fallback. It is strictly a prefix of the recommendation,
+  so choosing it costs nothing but the review artifact.
+
+ALTERNATIVE (ii) — merge josh/main into main, push to mine, PR to josh.
+  Pros: one repo containing both lineages; the mentor's tb/ BCG notebooks would
+  sit next to the hub. Cons: everything in 3.4. Also the PR would show 559 files
+  "added" to josh/main, which is unreviewable, and GitHub renders unrelated-
+  history PRs poorly. Verdict: reject. If co-locating tb/ is genuinely wanted,
+  copy the two notebooks in with attribution rather than merging 75 commits of
+  history.
+
+ALTERNATIVE (iv), worth considering — hand over via the `cellot` branch.
+  josh/cellot IS related to josh/main (merge base a7f7301) and already carries
+  23 Junyi commits. One could rebuild the modern tree onto a branch descended
+  from josh/cellot, giving a single connected history in the mentor's own repo.
+  Cons: the trees only share 12 paths, so this is a large synthetic commit
+  anyway; it also means maintaining the second worktree
+  (/n/holylabs/.../speciesOT-cellot) during the handoff. Verdict: more work than
+  (iii) for a cosmetic gain. Mentioned because it is the only route to a
+  connected history, in case that is a hard requirement (Q1).
+
+
+===============================================================================
+## 5. HYGIENE BLOCKERS A NEW COLLABORATOR WILL HIT
+===============================================================================
+
+5.1 .gitignore additions to make BEFORE the first `git add`
+------------------------------------------------------------
+    # Sibling experiment stacks: commit code, never artifacts
+    atlas-paper-vae/results/
+    atlas-paper-vae/data/
+    atlas-paper-vae/logs/
+    scgen-cellot-unbalanced/results/
+
+    # Slurm streams (the existing *.log rule misses these)
+    *.err
+    *.out
+
+    # Test cache
+    .pytest_cache/
+
+    # Per-machine Cursor state (keep .cursor/skills/ tracked)
+    .cursor/sandbox.json
+
+    # (pending Q3)
+    # .cursor-assets/
+
+5.2 Hardcoded absolute paths — the mentor's account has none of these
+----------------------------------------------------------------------
+  747 matching lines across tracked files; most are in the auto-generated
+  docs/experiments/*.md (harmless, AGENTS.md says not to hand-edit them —
+  `./hub vault` will regenerate them on his machine). The ones that MATTER are
+  the runnable ones:
+
+  Conda interpreters / conda init (breaks immediately on another account):
+    hub:16                          CONDA_INIT="/n/home01/jzhou1125/miniforge3/etc/profile.d/conda.sh"
+    speciesOT/hub/cli.py:431        "/n/home01/jzhou1125/miniforge3/envs/analysis/bin/python"
+    speciesOT/hub/cli.py:432        "/n/home01/jzhou1125/.conda/envs/analysis/bin/python"
+    speciesOT/hub/prep.py:99        "/n/home01/jzhou1125/.conda/envs/CellOT/bin/python"
+    speciesOT/hub/prep.py:100       "/n/home01/jzhou1125/miniforge3/envs/CellOT/bin/python"
+    scripts/predict_new_input.sh:37 ANALYSIS_PY="/n/home01/jzhou1125/miniforge3/envs/analysis/bin/python"
+    scripts/predict_new_input.sh:38 CELLOT_PY="/n/home01/jzhou1125/.conda/envs/CellOT/bin/python"
+    scripts/run_full_pipeline.sh:18 ANALYSIS_PY="/n/home01/jzhou1125/miniforge3/envs/analysis/bin/python"
+    scripts/refresh_results_loop.sh:9  PY=".../miniforge3/envs/analysis/bin/python"
+    scripts/biomart_watchdog.py:31  CELLOT_PY = "/n/home01/jzhou1125/.conda/envs/CellOT/bin/python"
+    scripts/make_transport_umaps.py:9 (docstring)
+    scripts/biomart_watchdog.py:9     (docstring)
+
+  Workspace roots (these SILENTLY read Junyi's files instead of failing):
+    speciesOT/hub/cli.py:421        WORKSPACE_ROOT = Path("/n/holylabs/.../junyizhou/speciesOT")
+    speciesOT/hub/discover.py:36    WORKSPACE_ROOT = Path(...)
+    speciesOT/hub/vault.py:30       DOCS_DIR       = Path(".../speciesOT/docs")
+    speciesOT/hub/render.py:22      ".../speciesOT/docs/model_cards"
+    speciesOT/hub/lps.py:16         WORKSPACE      = Path(...)      [untracked, will be committed]
+    scripts/predict_new_input.sh:36 BASE="/n/holylabs/.../junyizhou/speciesOT"
+    scripts/run_full_pipeline.sh:17 BASE=...
+    scripts/render_results_figures.py:40      BASE = Path(...)
+    scripts/regenerate_hvg_flavor_run_matrix.py:19  BASE = Path(...)
+    scripts/generate_hvg_flavor_configs.py:21 BASE = Path(...)   (+ :176 inside sbatch text)
+    scripts/generate_atlas_full_configs.py:16 BASE = Path(...)   (+ :132 inside sbatch text)
+    scripts/generate_data_space_eval_sbatches.py:11 BASE = ...   (+ :51 inside sbatch text)
+    scripts/build_experiments_inventory.py:39 PROJECT = Path(...)
+    scripts/biomart_watchdog.py:24,26
+    scripts/submit_hvg_flavor_matrix.sh:23    BASE=...
+    scripts/refresh_results_loop.sh:8,10,19,20
+    scripts/monitor_uncapped_chain.sh:11,12
+    scripts/check_uncapped_chain.sh:6,7,8
+    scripts/make_transport_umaps.py:21        ROOT = Path(...)
+
+  Pointing at the MENTOR's own holylabs dir (these are fine, keep):
+    speciesOT/hub/spec.py:80,81     /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/...
+    scripts/biomart_watchdog.py:33,34   same
+    cellot/cellot_gpu/configs/tasks/crossspecies.yaml:7 -> junyizhou path (NOT fine)
+
+  Minimal fix (do this, not a full refactor):
+    - hub:16 -> resolve CONDA_INIT by probing, e.g.
+        for c in "$HOME/miniforge3" "$HOME/.conda" "$HOME/miniconda3"; do ... done
+      and honor an override: CONDA_INIT="${SPECIESOT_CONDA_INIT:-<probe>}".
+    - Every WORKSPACE_ROOT/BASE/ROOT/PROJECT literal ->
+        Path(os.environ.get("SPECIESOT_ROOT", <path-derived-from-__file__>))
+      For hub modules, `Path(__file__).resolve().parents[2]` is exact and needs
+      no env var at all.
+    - Every hardcoded interpreter -> `shutil.which("python")` inside the
+      activated env, or an env var with the current path as fallback.
+    - Document SPECIESOT_ROOT in the new README.
+  Scope: ~8 hub/script files for the paths the mentor actually touches
+  (hub, cli.py, discover.py, vault.py, render.py, lps.py, prep.py,
+  predict_new_input.sh). The other scripts are training-time and can wait,
+  but say so explicitly in the README so he does not trip over them.
+
+5.3 The prediction path will not work from a fresh clone
+---------------------------------------------------------
+  scripts/predict_new_input.sh is the script the mentor's new phase is built
+  around. Confirmed via `git check-ignore` that ALL of its inputs are excluded
+  from git:
+
+    IGNORED  cellot/cellot_gpu/results/atlas_full_{seurat_v3,pearson_residuals}/
+             {scgen,impact_cellot}/cache/model.pt
+             (present on disk, ~8.0 MB each; the script hard-fails at line 42-49
+              if missing; atlas_full_* is 21 MB per flavor, 2.4 GB for all of
+              cellot/cellot_gpu/results)
+    IGNORED  scripts/.biomart_ortholog_cache.csv   (912 KB, used at line 72)
+    IGNORED  scripts/.bcg_symbol_to_ensmusg.csv    (260 KB, used at line 73)
+    IGNORED  cellot/cellot_gpu/datasets/           (the script's OUTDIR)
+
+  So a clone gives him the script and nothing it needs. Keeping these out of git
+  is correct (AGENTS.md, and 2.4 GB). The gap is that there is no documented
+  transfer path for them. There IS precedent to copy: offline_data_manifest.txt
+  + offline_bundle/README.md do exactly this (sha256 + rsync -avL) for the
+  training h5ads. Do the same for the prediction bundle:
+      atlas_full_{seurat_v3,pearson_residuals}/{scgen,impact_cellot}/cache/model.pt   (4 x 8 MB)
+      scripts/.biomart_ortholog_cache.csv
+      scripts/.bcg_symbol_to_ensmusg.csv
+  ~34 MB total. Since both accounts are on the same cluster, this is one
+  documented `rsync` from /n/holylabs/.../junyizhou/ to his own space, or a
+  group-readable shared drop directory. Permissions on holylabs should be
+  checked (Q6).
+
+5.4 No README, and no environment spec for the envs that matter
+----------------------------------------------------------------
+  - `git ls-tree --name-only main | grep -i readme` -> EMPTY. The repo root has
+    AGENTS.md but no README.md. AGENTS.md is written for AI agents ("Hard rules
+    (do not violate)", "Definition of done (for agents working here)"), not for
+    a human collaborator who wants to run one prediction. josh/main HAS a README
+    (2 lines). Write one: what the project is, how to get a working env, how to
+    get the artifacts from 5.3, and the single command to run a prediction.
+  - Tracked environment specs: only
+        cellot/cellot_gpu/requirements.txt
+        cellot/cellot_gpu/requirements-gpu.txt
+        cellot/cellot_gpu/setup.py
+        cellot/cellot_gpu/paper_crossspecies/scripts/setup.py
+    There is NO spec for the three conda envs AGENTS.md mandates: `CellOT`
+    (torch 1.11), `CellOT_gpu` (torch 2.x), `analysis` (scanpy >=1.12). The
+    mentor cannot recreate them. Export them:
+        conda env export -n CellOT      --no-builds > envs/CellOT.yml
+        conda env export -n CellOT_gpu  --no-builds > envs/CellOT_gpu.yml
+        conda env export -n analysis    --no-builds > envs/analysis.yml
+    and commit envs/. Note AGENTS.md's rule that cellot is NOT pip-installed and
+    needs PYTHONPATH=<repo>/cellot/cellot_gpu — that belongs in the README too.
+  - docs/local_offline_handoff.md hardcodes the Mac path
+    /Users/conny/Desktop/speciesOT/speciesOT. It is a personal doc; either say
+    so in its first line or archive it, so the mentor does not try to follow it.
+  - docs/hub_handoff.md is "Last updated: 2026-06-09" and self-describes as
+    secondary to AGENTS.md. Fine, but its opening reading list should get the
+    new README added as step 0.
+
+
+===============================================================================
+## 6. OPEN QUESTIONS FOR THE HUMAN
+===============================================================================
+
+Q1. Does the mentor want the work IN github.com/JoshuaPrice/speciesOT, or is a
+    link to JunyiZhou-Conny/speciesOT acceptable? This is the single decision
+    that picks between Option (iii) and Option (iv). "Update your GitHub" most
+    naturally reads as "push your fork and tell me the URL" — that is the
+    assumption behind the recommendation, but it should be confirmed, because
+    (iv) is much more work and cannot be retrofitted cheaply.
+
+Q2. mixhvg-py is GPL-3 (mixhvg-py/NOTICE.md). docs/hub_usage.md:270 already
+    warns "the hub inherits GPL-3 if it becomes a hard dependency". Vendoring it
+    into a repo intended for a publication pipeline is a licensing decision, not
+    a technical one. Commit it, keep it out and require `pip install` from
+    source, or drop the mixhvg flavor? Recommendation: commit it (it is 84 KB
+    and hub_usage already documents it) and confirm the NOTICE is prominent —
+    but a human must own this.
+
+Q3. .cursor-assets/ — 5.7 MB of five PNGs (failure-1..5) that nothing in the
+    repo references. Were these for a specific talk? If they belong to a
+    presentation, they should live with that presentation, not at repo root.
+    Default recommendation: gitignore. Cannot decide this without knowing what
+    they were made for.
+
+Q4. speciesOT/baseline/analysis/20_m1_mmd_investigation.ipynb has 7 executed
+    output cells in the +363/-183 diff. Every other notebook in the repo appears
+    to be committed with outputs, so committing as-is is consistent — but if any
+    output cell embeds an absolute path or a large base64 image, it should be
+    cleared first. Commit with outputs, or strip?
+
+Q5. scgen-cellot-unbalanced/ — AGENTS.md says the unbalanced-OT line is PAUSED.
+    Commit the code at its current path (signals "live"), or commit it under an
+    _archive/ path per the AGENTS.md archiving convention (signals "parked, do
+    not start here")? Recommendation: archive-style path, so the mentor's first
+    `ls` shows only live work. Same question applies more weakly to
+    atlas-paper-vae/, which is recent and arguably still live.
+
+Q6. Can the mentor read /n/holylabs/mooney_lab/Lab/junyizhou/ directly? Both
+    accounts are in mooney_lab, so a group-readable path may make the 34 MB
+    artifact transfer in 5.3 a one-line rsync — or even let him point
+    SPECIESOT_ROOT at a shared location. I did not check the ACLs, and I should
+    not change them.
+
+Q7. WHAT IS IN THE 8f0a7d82 COMMITS? I could not answer this. The local
+    josh/main is stale and the new objects are not in .git. `git fetch josh` is
+    the only way, and it mutates remote-tracking refs, which is outside the
+    read-only boundary I was given. If those commits touch tb/, section 3.1's
+    claim that the BCG setup lives only in the mentor's repo may need updating.
+
+
+===============================================================================
+## 7. WHAT I COULD NOT VERIFY
+===============================================================================
+  - Content of josh/main beyond f0585b4 (see Q7). All divergence numbers in this
+    document are against the stale ref.
+  - Whether `./hub` currently runs. I did not execute it; the import coupling in
+    FINDING 3 is read from the source, not from a traceback.
+  - Whether the mentor's account can read junyizhou's holylabs tree (Q6).
+  - Whether the 4 atlas_full model.pt checkpoints are the ones the new BCG phase
+    should use. predict_new_input.sh calls them "the already-trained May-8
+    atlas-full models"; AGENTS.md's frozen benchmark is the v08 OOD cuts. Those
+    may not be the same models. Worth confirming before writing the README's
+    "run a prediction" section.
+  - Whether scripts/eval_external_target.py (path 26) is finished. It was written
+    by another process at 16:24 today, mid-analysis. I read its header only; I did
+    not run it or review it end to end. Re-run `git status --short` before
+    executing this plan in case more work has landed since.
