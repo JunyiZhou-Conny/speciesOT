@@ -236,7 +236,7 @@ Reading the spec's preprocessing-intent fields (`source_datasets`, `assay_filter
 3. **Ortholog-aligns** mouse↔human onto a shared one-to-one axis. Uses the cached BioMart table at `scripts/.biomart_ortholog_cache.csv` if present (the slow path queries Ensembl live and writes the cache for next time).
 4. **Matches cells by `(cell_type_ontology_term_id, tissue_ontology_term_id)`** with the spec's `random_state`. With the assay filter on, the atlas yields ~8,054 paired cells (4,027 per species); the pre-filter v07 cut was ~12,990 (6,495 per species).
 5. Snapshots raw counts to `.layers['counts']`, then sets `.X = log1p(normalize_total(counts, 1e4))`.
-6. Selects the top `hvg_n_top` HVG with `hvg_method` on the **train-eligible (non-holdout) cells**, dispatching the input layer per flavor (raw counts for `seurat_v3`/`seurat_v3_paper`/`pearson_residuals`, log-norm `.X` for `seurat`/`cell_ranger`).
+6. Selects the top `hvg_n_top` HVG with `hvg_method` on the **train-eligible (non-holdout) cells**, dispatching the input layer per flavor (raw counts for `seurat_v3`/`seurat_v3_paper`/`pearson_residuals`/`mixhvg`/`mixhvg_default`, log-norm `.X` for `seurat`/`cell_ranger`).
 7. Subsets to those HVG (**keeping** the holdout cells — `toggle_ood` splits them at train time), strips everything but `.X`/`.obs`, writes the file, and round-trips it through the CellOT env's anndata 0.7 for downstream compatibility.
 8. Reads the result back and prints a verification panel (shape, `.X` range, obs columns, `condition` balance).
 
@@ -256,6 +256,21 @@ python -m speciesOT.hub.prep specs/m1_modern.yaml
 - **Assay filter is enforced** (`assay_filter`): only the listed platform(s) per species survive (default mouse `10x 3' v2` / human `10x 3' v3`); Smart-seq2 and other platforms are dropped *before* ortholog matching and HVG. This was previously recorded-but-never-applied; it is now applied in prep, so any dataset built by `./hub prep` is single-platform per species. If the filter would remove all cells (e.g. a typo'd token), prep aborts with the source's actual assay values listed. See `conceptual_framework.md` §5.10.
 - `.X` is **always** log-normalized regardless of `hvg_method`; this is the fixed 01.5 contract that scGen/IMPACT depend on. A spec that sets `log1p_applied: false` contradicts that contract — prep warns and log-normalizes anyway so the output matches what 01.5 would have produced.
 
+### Ensemble HVG: `hvg_method: mixhvg`
+
+Two extra flavors select genes by **combining several single-flavor scores** instead of trusting one, following Zhao et al. 2024 ([doi:10.1101/2024.08.25.608519](https://doi.org/10.1101/2024.08.25.608519)):
+
+| flavor | member methods |
+|---|---|
+| `mixhvg` | `scran`, `seuratv1`, `mv_PFlogPF`, `scran_pos` (the paper's recommendation) |
+| `mixhvg_default` | `scran`, `scran_pos`, `seuratv1` (the R package default) |
+
+Each member scores every gene; scores become ascending ranks; each gene keeps the **best rank any member gave it**. It is a union, not an average — a gene one method loves and three hate is still selected.
+
+Requires the `mixhvg-py` package in the **analysis** env (`pip install -e mixhvg-py`), a Python port of the R original. Read `mixhvg-py/docs/fidelity.md` before quoting results: the Seurat-derived members reproduce R exactly, `scran`/`scran_pos`/`mv_PFlogPF` agree at Spearman 0.965–0.9998, and the recommended mixture matches R at Jaccard 0.98. The `mv_ct` and `mv_nc` members do **not** match and are excluded from both flavors. `mixhvg-py` is GPL-3, which the hub inherits if it becomes a hard dependency — see `mixhvg-py/NOTICE.md`.
+
+**Batch handling is deliberately borrowed, not invented.** mixhvg has no notion of batches, but `hvg_batch_key` defaults to `species` on every existing run, so prep computes the ensemble independently within each batch and combines batches by scanpy's `seurat_v3` rule (keep a gene's rank only in batches where it made that batch's top-`n_top`, then take the nanmedian, then break ties by batch count). Without this the comparison would confound "ensemble vs single flavor" with "batch-aware vs batch-blind". On a synthetic two-species check this recovers 19/20 planted species-specific genes, matching `pearson_residuals`; a naive median over full ranks recovers only 7/20 because it averages a good rank against a bad one and throws away single-species genes.
+
 ### The full one-command experiment flow
 
 ```bash
@@ -266,6 +281,64 @@ python -m speciesOT.hub.prep specs/m1_modern.yaml
 # wait for training + evals
 ./hub list / show / compare           # inspect results
 ```
+
+### Cross-species LPS frozen-AE ICNN study
+
+The controlled `G2000_scgen` transport-swap study has a dedicated hub route:
+
+```bash
+./hub lps icnn-generate --round 1
+# review and copy-paste the printed seven-job Slurm array command
+# after all jobs finish:
+./hub lps icnn-summarize --round 1
+```
+
+Round 1 uses the seven frozen rungs declared in
+`specs/lps_icnn_ae_study.yaml` and writes
+`scgen-cellot-autoresearch/ae_study/results/ot_ladder_g2000_scgen.csv`.
+The generated jobs train only CellOT's ICNN map; AE/PCA/linear projectors stay
+frozen. The pending CSV includes existing mean-shift metrics for comparison.
+As elsewhere, `generate` validates and prints but never calls `sbatch`.
+
+The separate TensorFlow paper anchor is inspected with:
+
+```bash
+./hub lps scgen-paper-generate
+```
+
+It prints one evaluation sbatch for the already-trained 6,619-gene Fig. 5
+checkpoint and does not merge that result into the G=2000 OT ladder.
+
+The no-retraining identity audit is generated separately:
+
+```bash
+./hub lps scgen-paper-audit-generate
+# review and copy-paste the printed CPU sbatch
+```
+
+That job first preserves the pre-audit `metrics.json`, rechecks the frozen
+all-gene Figure-5 gate, adds the paper's top-100 Wilcoxon-DEG R², then compares
+train, seen rat-unstimulated, and held-out rat-LPS6 encode→decode behavior
+against shuffled, gene-mean, zero, and exact-identity baselines. It writes
+small JSON/CSV/NPZ sidecars and exportable figures under
+`scgen-cellot-ablation/results/stage0/`; it does not retrain the VAE and does
+not start unbalanced OT.
+
+The bounded AE follow-up is a separate gated study:
+
+```bash
+./hub lps scgen-ae-followup-generate --round 1
+# review and submit the printed four-task CPU array
+# after all tasks complete:
+./hub lps scgen-ae-followup-summarize --round 1
+```
+
+Round 1 is the preregistered `VAE/DAE × dropout 0.2/0.0` comparison at fixed
+`z=100`, architecture, optimizer, epoch budget, data, split and seed. Each task
+writes Figure-5 all-gene/top-100-DEG metrics plus the required five-axis AE
+identity sidecars. Rounds 2–3 are not generated until the prior round's
+decision JSON passes identity and transport non-inferiority gates declared in
+`specs/lps_scgen_ae_followup.yaml`. The hub only prints submission commands.
 
 ## What's still planned
 

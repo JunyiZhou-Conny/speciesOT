@@ -27,7 +27,7 @@ from typing import Optional
 from speciesOT.hub.catalog import EvalRecord, ModelRecord
 
 # Vault lives in docs/ (the folder the user opens as an Obsidian vault).
-DOCS_DIR = Path("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/docs")
+from speciesOT.hub.paths import DOCS_DIR  # noqa: E402
 DEFAULT_EXPERIMENTS_DIR = DOCS_DIR / "experiments"
 
 # Display labels per family (mirrors render.py).

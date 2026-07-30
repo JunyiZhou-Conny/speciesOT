@@ -33,7 +33,7 @@ from speciesOT.hub.resolve import (
 )
 
 
-WORKSPACE_ROOT = Path("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT")
+from speciesOT.hub.paths import WORKSPACE_ROOT  # noqa: E402
 
 # Each root has a short tag used as the first segment of run_id so that
 # identically-named experiments in two roots remain disambiguated.
@@ -151,10 +151,15 @@ def _classify_data_source(
         hvg_method = "cell_ranger"
     elif "hvg_seurat" in p:
         hvg_method = "seurat"
+    elif "hvg_mixhvg_default" in p:
+        hvg_method = "mixhvg_default"
+    elif "hvg_mixhvg" in p:
+        hvg_method = "mixhvg"
 
     # HVG input layer: which layer the HVG selection function consumed.
     # (CORRECTED from earlier heuristic; verified against 01.5 §3 / §5 commentary.)
-    if hvg_method in {"seurat_v3", "seurat_v3_paper", "pearson_residuals"}:
+    if hvg_method in {"seurat_v3", "seurat_v3_paper", "pearson_residuals",
+                      "mixhvg", "mixhvg_default"}:
         hvg_input_layer = "layers['counts']"
     elif hvg_method in {"seurat", "cell_ranger"}:
         hvg_input_layer = "X (log-norm)"

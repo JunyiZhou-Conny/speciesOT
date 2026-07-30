@@ -45,6 +45,14 @@ from speciesOT.hub.spec import (
     spec_from_record,
     write_spec_yaml,
 )
+from speciesOT.hub.lps import (
+    icnn_generate as lps_icnn_generate,
+    icnn_summarize as lps_icnn_summarize,
+    scgen_ae_followup_generate as lps_scgen_ae_followup_generate,
+    scgen_ae_followup_summarize as lps_scgen_ae_followup_summarize,
+    scgen_paper_audit_generate as lps_scgen_paper_audit_generate,
+    scgen_paper_generate as lps_scgen_paper_generate,
+)
 
 
 def _format_value(v: Any) -> str:
@@ -410,19 +418,18 @@ def _vault_command(args: argparse.Namespace) -> int:
     return 0
 
 
-WORKSPACE_ROOT = Path("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT")
-CELLOT_DIR = WORKSPACE_ROOT / "cellot" / "cellot_gpu"
+from speciesOT.hub.paths import (  # noqa: E402
+    CELLOT_DIR,
+    WORKSPACE_ROOT,
+    env_python_candidates,
+)
 
 
 # The data-prep stage needs scanpy >= 1.12 (Pearson residuals, seurat_v3_paper),
 # which lives in the `analysis` env — not the CellOT env the hub runs in. So
 # `./hub prep` shells out to the analysis interpreter running
 # `python -m speciesOT.hub.prep`. Override the interpreter with SPECIESOT_ANALYSIS_PY.
-_ANALYSIS_PY_CANDIDATES = [
-    os.environ.get("SPECIESOT_ANALYSIS_PY", ""),
-    "/n/home01/jzhou1125/miniforge3/envs/analysis/bin/python",
-    "/n/home01/jzhou1125/.conda/envs/analysis/bin/python",
-]
+_ANALYSIS_PY_CANDIDATES = env_python_candidates("analysis", "SPECIESOT_ANALYSIS_PY")
 
 
 def _resolve_analysis_py() -> str | None:
@@ -715,6 +722,32 @@ def _generate_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _lps_icnn_generate_command(args: argparse.Namespace) -> int:
+    return lps_icnn_generate(args.round, concurrency=args.concurrency)
+
+
+def _lps_icnn_summarize_command(args: argparse.Namespace) -> int:
+    return lps_icnn_summarize(args.round)
+
+
+def _lps_scgen_paper_generate_command(args: argparse.Namespace) -> int:
+    return lps_scgen_paper_generate()
+
+
+def _lps_scgen_paper_audit_generate_command(args: argparse.Namespace) -> int:
+    return lps_scgen_paper_audit_generate()
+
+
+def _lps_scgen_ae_followup_generate_command(args: argparse.Namespace) -> int:
+    return lps_scgen_ae_followup_generate(
+        args.round, concurrency=args.concurrency
+    )
+
+
+def _lps_scgen_ae_followup_summarize_command(args: argparse.Namespace) -> int:
+    return lps_scgen_ae_followup_summarize(args.round)
+
+
 def _export_command(args: argparse.Namespace) -> int:
     catalog = build_catalog()
     fmt = args.format
@@ -976,6 +1009,66 @@ def main() -> int:
         help="comma-separated subsample sizes (default: the script's 30,50,80)",
     )
     metrics_p.set_defaults(func=_metrics_command)
+
+    lps_p = sub.add_parser(
+        "lps",
+        help="cross-species LPS studies: paper scGen replication and frozen-AE ICNN-OT",
+    )
+    lps_sub = lps_p.add_subparsers(dest="lps_cmd", required=True)
+
+    lps_icnn_gen = lps_sub.add_parser(
+        "icnn-generate",
+        help="generate one ICNN-OT round and print its manual Slurm submission command",
+    )
+    lps_icnn_gen.add_argument("--round", type=int, choices=(1, 2, 3), required=True)
+    lps_icnn_gen.add_argument(
+        "--concurrency",
+        type=int,
+        default=4,
+        help="maximum simultaneous Slurm array tasks (default: 4)",
+    )
+    lps_icnn_gen.set_defaults(func=_lps_icnn_generate_command)
+
+    lps_icnn_summary = lps_sub.add_parser(
+        "icnn-summarize",
+        help="merge one ICNN-OT round's per-run metrics into its study CSV",
+    )
+    lps_icnn_summary.add_argument("--round", type=int, choices=(1, 2, 3), required=True)
+    lps_icnn_summary.set_defaults(func=_lps_icnn_summarize_command)
+
+    lps_scgen = lps_sub.add_parser(
+        "scgen-paper-generate",
+        help="validate the completed TensorFlow Fig. 5 checkpoint and print eval sbatch",
+    )
+    lps_scgen.set_defaults(func=_lps_scgen_paper_generate_command)
+
+    lps_scgen_audit = lps_sub.add_parser(
+        "scgen-paper-audit-generate",
+        help=(
+            "validate the TensorFlow Fig. 5 checkpoint and print the no-retraining "
+            "Stage-0 identity audit sbatch"
+        ),
+    )
+    lps_scgen_audit.set_defaults(func=_lps_scgen_paper_audit_generate_command)
+
+    lps_scgen_ae = lps_sub.add_parser(
+        "scgen-ae-followup-generate",
+        help="generate the bounded scGen AE identity follow-up and print its sbatch",
+    )
+    lps_scgen_ae.add_argument("--round", type=int, choices=(1, 2, 3), required=True)
+    lps_scgen_ae.add_argument("--concurrency", type=int, default=2)
+    lps_scgen_ae.set_defaults(func=_lps_scgen_ae_followup_generate_command)
+
+    lps_scgen_ae_summary = lps_sub.add_parser(
+        "scgen-ae-followup-summarize",
+        help="summarize a completed bounded scGen AE follow-up round",
+    )
+    lps_scgen_ae_summary.add_argument(
+        "--round", type=int, choices=(1, 2, 3), required=True
+    )
+    lps_scgen_ae_summary.set_defaults(
+        func=_lps_scgen_ae_followup_summarize_command
+    )
 
     handoff_p = sub.add_parser(
         "handoff",

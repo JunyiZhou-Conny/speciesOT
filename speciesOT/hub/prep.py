@@ -80,16 +80,23 @@ KEEP_OBS = [
 ]
 
 # Flavors whose HVG runs on raw counts (.layers['counts']) vs log-norm (.X).
-_RAW_COUNT_FLAVORS = {"seurat_v3", "seurat_v3_paper", "pearson_residuals"}
+_RAW_COUNT_FLAVORS = {"seurat_v3", "seurat_v3_paper", "pearson_residuals",
+                      "mixhvg", "mixhvg_default"}
 _LOGNORM_FLAVORS = {"seurat", "cell_ranger"}
+
+# Ensemble flavors from the mixhvg-py port. `mixhvg` is the mixture the mixhvg
+# paper recommends; `mixhvg_default` is the upstream package default. Both are
+# rank-max ensembles over several single-flavor scores.
+_MIXHVG_FLAVORS = {
+    "mixhvg": ("scran", "seuratv1", "mv_PFlogPF", "scran_pos"),
+    "mixhvg_default": ("scran", "scran_pos", "seuratv1"),
+}
 
 # CellOT-env interpreter (anndata 0.7.6) for the round-trip. Override with the
 # SPECIESOT_CELLOT_PY env var. First existing candidate wins.
-_CELLOT_PY_CANDIDATES = [
-    os.environ.get("SPECIESOT_CELLOT_PY", ""),
-    "/n/home01/jzhou1125/.conda/envs/CellOT/bin/python",
-    "/n/home01/jzhou1125/miniforge3/envs/CellOT/bin/python",
-]
+from speciesOT.hub.paths import env_python_candidates  # noqa: E402
+
+_CELLOT_PY_CANDIDATES = env_python_candidates("CellOT", "SPECIESOT_CELLOT_PY")
 
 
 class PrepError(RuntimeError):
@@ -114,6 +121,114 @@ def _resolve_cellot_py() -> str:
 # ---------------------------------------------------------------------------
 # HVG dispatcher + cleaner (ported verbatim from 01.5 §5)
 # ---------------------------------------------------------------------------
+
+def _run_mixhvg(adata, flavor, n_top, batch_key):
+    """Ensemble HVG via the mixhvg-py port. Returns the standard per-gene frame.
+
+    Two deliberate choices, both needed for this to be comparable to the existing
+    single flavors rather than a different experiment:
+
+    1. Input is `.layers['counts']`, matching seurat_v3 / pearson_residuals.
+    2. Batch handling mirrors scanpy's `seurat_v3` rule exactly. mixhvg itself has
+       no notion of batches, so without this the v08 comparison would confound
+       "ensemble vs single flavor" with "batch-aware vs batch-blind" — and
+       `hvg_batch_key` defaults to "species" on every existing run.
+
+       The detail that matters: scanpy keeps a gene's rank only in the batches
+       where it made that batch's top-`n_top`, sets the rest to NaN, and takes the
+       **nan**median. A naive median over full ranks averages a good rank against a
+       bad one and systematically discards genes that are variable in only one
+       species — which is most of the interesting biology in a cross-species task.
+       On a synthetic two-species test the naive rule recovered 7/20 planted
+       species-specific genes where scanpy's rule recovers ~19/20.
+
+    Note the two combination rules are different on purpose: max-rank ACROSS
+    METHODS (mixhvg's own union-flavoured rule, which is the thing being tested)
+    and scanpy's nanmedian-rank ACROSS BATCHES (held fixed as a control).
+    """
+    import numpy as np
+    import pandas as pd
+    from scipy.stats import rankdata
+
+    try:
+        from mixhvg import find_variable_features_mix
+    except ImportError as exc:  # pragma: no cover
+        raise PrepError(
+            "hvg_method={!r} needs the mixhvg-py package. Install it into the "
+            "analysis env with: pip install -e mixhvg-py".format(flavor)
+        ) from exc
+
+    methods = list(_MIXHVG_FLAVORS[flavor])
+    if "counts" not in adata.layers:
+        raise PrepError(
+            f"hvg_method={flavor!r} needs .layers['counts']; none found"
+        )
+
+    def combined_rank(sub):
+        """Per-gene rank, 1 = most variable, over the whole gene set."""
+        _, extra = find_variable_features_mix(
+            sub.layers["counts"],
+            gene_names=sub.var_names.to_numpy(),
+            method_names=methods,
+            nfeatures=min(n_top, sub.n_vars),
+            return_scores=True,
+        )
+        # combined values are higher-is-better; negate for a 1-is-best rank.
+        return rankdata(-np.asarray(extra["combined"], dtype=np.float64), method="min")
+
+    n_keep = min(n_top, adata.n_vars)
+    if batch_key and batch_key in adata.obs.columns:
+        batches = adata.obs[batch_key].astype(str)
+        per_batch = []
+        for b in sorted(batches.unique()):
+            sub = adata[(batches == b).to_numpy()].copy()
+            if sub.n_obs < 3:
+                _log(f"  mixhvg: skipping batch {b!r} with only {sub.n_obs} cells")
+                continue
+            r = combined_rank(sub).astype(np.float64)
+            # scanpy semantics: a gene only carries a rank in batches where it was
+            # actually selected; elsewhere it is NaN and drops out of the median.
+            r[r > n_keep] = np.nan
+            per_batch.append(r)
+            _log(f"  mixhvg: ranked batch {b!r} ({sub.n_obs} cells)")
+        if not per_batch:
+            raise PrepError(
+                f"hvg_method={flavor!r}: no batch of {batch_key!r} had enough cells"
+            )
+        stacked = np.vstack(per_batch)
+        with np.errstate(invalid="ignore"):
+            rank_vec = np.nanmedian(stacked, axis=0)
+        n_batches_hv = np.sum(~np.isnan(stacked), axis=0)
+    else:
+        if batch_key:
+            _log(
+                f"  mixhvg: batch_key {batch_key!r} not in obs; running batch-blind"
+            )
+        rank_vec = combined_rank(adata).astype(np.float64)
+        n_batches_hv = np.ones(adata.n_vars, dtype=int)
+
+    # scanpy sorts by median rank ascending then batch count descending, NaN last.
+    order = np.lexsort(
+        (
+            np.arange(adata.n_vars),  # stable tie-break on gene order
+            -n_batches_hv,
+            np.where(np.isnan(rank_vec), np.inf, rank_vec),
+        )
+    )
+    chosen = np.zeros(adata.n_vars, dtype=bool)
+    chosen[order[:n_keep]] = True
+
+    df = pd.DataFrame(index=adata.var_names.copy())
+    df["highly_variable"] = chosen
+    # `score` is higher-is-better by hub convention, so report the negated rank.
+    df["score"] = -rank_vec
+    df["flavor"] = flavor
+    final_rank = np.full(adata.n_vars, np.nan)
+    final_rank[order[:n_keep]] = np.arange(1, n_keep + 1)
+    df["rank"] = final_rank
+    df["highly_variable_nbatches"] = n_batches_hv
+    return df
+
 
 def _run_hvg_flavor(adata, flavor, n_top, batch_key):
     """Run HVG for `flavor`, returning a per-gene DataFrame with `highly_variable`,
@@ -154,6 +269,8 @@ def _run_hvg_flavor(adata, flavor, n_top, batch_key):
             if "residual_variances" in a.var.columns
             else "highly_variable_rank"
         )
+    elif flavor in _MIXHVG_FLAVORS:
+        return _run_mixhvg(a, flavor, n_top, batch_key)
     else:
         raise PrepError(
             f"unknown hvg_method {flavor!r}. Supported: "

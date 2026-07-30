@@ -18,9 +18,7 @@ from speciesOT.hub.figures import list_attached_figures
 
 
 # Where cards go by default.
-DEFAULT_CARDS_DIR = Path(
-    "/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/docs/model_cards"
-)
+from speciesOT.hub.paths import MODEL_CARDS_DIR as DEFAULT_CARDS_DIR  # noqa: E402
 
 
 def run_id_to_filename(run_id: str) -> str:
