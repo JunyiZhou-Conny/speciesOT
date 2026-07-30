@@ -1,0 +1,62 @@
+# Option A — LPS rat OOD freeze (balanced / uniform-weight parity end).
+# Paths are relative to cellot/cellot_gpu/; train_option_a.py absolutizes them.
+# AE is FROZEN — do not retrain. Same ICNN recipe as production IMPACT.
+
+data:
+  ae_emb:
+    path: ./results/paper_crossspecies_rat_ood/scgen/
+  condition: condition
+  path: datasets/scrna-crossspecies/hvg-top1k-train-only.h5ad
+  source: unst
+  target: LPS6
+  type: cell
+dataloader:
+  batch_size: 256
+  shuffle: true
+datasplit:
+  groupby:
+  - species
+  - condition
+  holdout: rat
+  key: species
+  mode: ood
+  name: toggle_ood
+  random_state: 0
+  stratify: condition
+  test_size: 500
+device: cuda
+model:
+  g:
+    fnorm_penalty: 1
+  hidden_units:
+  - 64
+  - 64
+  - 64
+  - 64
+  kernel_init_fxn:
+    b: 0.1
+    name: uniform
+  latent_dim: 50
+  name: cellot
+  softplus_W_kernels: false
+optim:
+  beta1: 0.5
+  beta2: 0.9
+  lr: 0.0001
+  optimizer: Adam
+  weight_decay: 0
+training:
+  cache_freq: 1000
+  eval_freq: 250
+  logs_freq: 50
+  n_inner_iters: 10
+  n_iters: 250000
+
+# Option-A metadata (ignored by CellOT; consumed by our scripts)
+uot:
+  option: A
+  freeze_target: paper_crossspecies_rat_ood
+  balanced_baseline_run: gpu/paper_crossspecies_rat_ood/impact_cellot
+  parity_fgc_decoded_n80: 0.0759
+  parity_fgc_decoded_n500: 0.0918
+  parity_tolerance_abs: 0.03

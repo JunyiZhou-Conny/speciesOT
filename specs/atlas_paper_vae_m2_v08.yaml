@@ -1,0 +1,46 @@
+# Plan C — Lotfollahi-like TF VAE on M2 v08 atlas.
+# NEW TAG ONLY. Does not feed ./hub generate as family=scgen.
+# Fence: never write cellot/.../hvg_pearson_residuals_*_v08_ood/scgen/
+experiment_tag: atlas_paper_vae_m2_v08_ood
+derived_from: m2_baseline
+model_family: paper_vae_tf   # not hub scgen
+data_source: speciesot-human-mouse-hvg
+data_file: cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/hvg_pearson_residuals_m2_v08.h5ad
+# Data contract mirrored from specs/m2_baseline.yaml (read-only reuse of h5ad)
+assay_filter:
+  mouse:
+  - chromium_v2
+  human:
+  - chromium_v3
+ortholog_source: biomart
+hvg_method: pearson_residuals
+hvg_n_top: 1000
+log1p_applied: true
+condition_column: condition
+source: mouse
+target: human
+holdout_cell_types:
+- CL:0000875
+- CL:0000576
+holdout_species: null
+datasplit_strategy: toggle_ood
+mode: ood
+test_size: 0.2
+random_state: 0
+datasplit_stratify: condition
+# Paper VAEArith knobs (Stage 0 / Fig.5)
+vae_hidden_units:
+- 800
+- 800
+vae_latent_dim: 100
+vae_alpha: 5.0e-5
+vae_dropout: 0.2
+vae_lr: 0.001
+vae_batch_size: 32
+vae_n_epochs: 300
+prediction_rule: single_species_delta
+data_space_n_cells: 30,50,80
+result_root: atlas-paper-vae/results/atlas_paper_vae_m2_v08_ood
+notes: >-
+  Plan C scaffold. Same v08 h5ad + toggle_ood as m2_baseline for apples-to-apples
+  vs hub AE-scGen. Trains TF VAEArith outside the hub; does not overwrite v08 scgen/.

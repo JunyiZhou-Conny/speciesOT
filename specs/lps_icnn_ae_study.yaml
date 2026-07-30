@@ -1,0 +1,86 @@
+experiment_tag: lps_icnn_ae_study
+data_source: Hagai cross-species LPS
+data_file: scgen-cellot-ablation/data/processed/arms/G2000_scgen.h5ad
+split: scgen
+holdout: rat LPS6
+gene_space: 2000
+hvg_method: scanpy_seurat_lognorm
+hvg_note: >
+  Existing controlled-study axis. This is Scanpy flavor="seurat" on
+  log-normalized train-eligible cells, not Seurat v3.
+metric_seed: 0
+headline_ncells: 80
+
+transport:
+  name: cellot_icnn
+  hidden_units: [64, 64, 64, 64]
+  lr: 0.0001
+  batch_size: 256
+  n_iters: 250000
+  n_inner_iters: 10
+  seed: 0
+
+round1:
+  representations:
+    - representation: raw
+      rung_id: raw_ot
+      representation_id: raw_g2000_scgen
+      recipe: identity
+      latent_dim: 2000
+    - representation: pca
+      rung_id: pca_ot
+      representation_id: pca_full_2000_scgen
+      recipe: full_rank
+      latent_dim: 2000
+    - representation: linear_ae
+      rung_id: linear_ot
+      representation_id: linear_ae_2000_scgen_wd0_lr0.001
+      recipe: linear
+      latent_dim: 2000
+      checkpoint: scgen-cellot-autoresearch/ae_study/results/checkpoints/linear_ae_g2000_scgen_lr0.001_wd0.pt
+    - representation: shallow_ae
+      rung_id: shallow_ot
+      representation_id: 0a6ec2a23117
+      recipe: seeded_adam
+      latent_dim: 2000
+      run_dir: scgen-cellot-autoresearch/results/runs/0a6ec2a23117_scgen_2000
+    - representation: deep_ae
+      rung_id: deep50_ot
+      representation_id: b9282d6bdf19
+      recipe: seeded_adam
+      latent_dim: 50
+      run_dir: scgen-cellot-autoresearch/results/runs/b9282d6bdf19_scgen_2000
+    - representation: deep_ae
+      rung_id: deep800_ot
+      representation_id: c96019c2c07a
+      recipe: seeded_adam
+      latent_dim: 800
+      run_dir: scgen-cellot-autoresearch/results/runs/c96019c2c07a_scgen_2000
+    - representation: deep_ae
+      rung_id: deep2000_ot
+      representation_id: 13b5b7987023
+      recipe: seeded_adam
+      latent_dim: 2000
+      run_dir: scgen-cellot-autoresearch/results/runs/13b5b7987023_scgen_2000
+
+round2:
+  source_csv: scgen-cellot-autoresearch/ae_study/results/controlled_latent_sweep_seed0.csv
+  latents: [50, 200, 400, 800, 1152, 2000]
+  recipe: seeded_adam
+
+round3:
+  source_csv: scgen-cellot-autoresearch/ae_study/results/optimization_sweep_seed0.csv
+  recipes: [baseline, bestval, dropout, adamw, cosine_clip, combined]
+  baseline_reuses_round2: true
+
+paper_scgen:
+  data_file: scgen-cellot-ablation/data/raw/train_species.h5ad
+  checkpoint_prefix: scgen-cellot-ablation/scgen-reproducibility/models/scGen/species/rat/scgen
+  genes: 6619
+  latent_dim: 100
+  hidden_units: [800, 800]
+  alpha: 0.00005
+  dropout: 0.2
+  learning_rate: 0.001
+  epochs: 300
+  held_out: rat LPS6

@@ -1,0 +1,178 @@
+experiment_tag: e3_devar_confirmation
+question: >
+  Is source-estimated, mean-preserving per-gene variance de-attenuation a real
+  post-hoc correction, or a property of one paper-VAE checkpoint measured at one
+  MMD seed?
+
+motivation: >
+  E3 (research_log_2026-07-27, jobs 35558027/35560653) is the only intervention
+  in the study that improved a transport distribution metric at zero cost to the
+  paper mean metrics: atlas m1 model/floor 2.60 -> 1.31, m2 2.83 -> 1.20, with
+  r2_all and marker r2 EXACTLY unchanged by construction. It is single-seed, on
+  saved predictions, on the TF paper VAE only, at ncells=80 where our own 5.9
+  rule warns the decoded fraction is noise-sensitive. Before any claim it needs
+  (a) metric-noise replication, (b) a falsification control, and (c) evidence it
+  is not checkpoint-specific.
+
+prior_result_being_tested:
+  script: scgen-cellot-ablation/scripts/12_transport_calibration.py
+  outputs: scgen-cellot-ablation/results/transport_calibration/
+  seed: 0
+  ncells: 80
+  cap: 5.0
+  claims:
+    - r2_all and r2_markers exactly unchanged vs raw (construction, not result)
+    - atlas m1 model_over_floor 2.60 -> 1.31 ; fgc .511 -> .847
+    - atlas m2 model_over_floor 2.83 -> 1.20 ; fgc .498 -> .884
+    - LPS model_over_floor 1.79 -> 1.93 (does NOT help in relative terms)
+    - mean JS worsens on the atlas (.109 -> .148 m1) and improves on LPS
+
+# --------------------------------------------------------------------------
+# Phase A: is the seed-0 number real? (inference only, existing checkpoints)
+# --------------------------------------------------------------------------
+phase_a:
+  status: proposed
+  name: metric-noise replication and falsification controls
+  what_is_and_is_not_reseeded: >
+    --seed in 12_transport_calibration.py seeds the MMD subsampling ONLY. No AE
+    and no transport map is retrained anywhere in E3. Phase A is therefore a
+    metric-noise replication, NOT a training-seed replication. Do not describe
+    its output as multi-seed confirmation in the Round-1/Round-3 sense; there is
+    no multi-seed paper VAE on disk and creating one is out of scope here.
+  cuts:
+    - lps_stage0_two_path
+    - atlas_paper_vae_m1_v08_ood
+    - atlas_paper_vae_m2_v08_ood
+  metric_seeds: [0, 1, 2, 3, 4]
+  ncells: [30, 50, 80]
+  ncells_note: >
+    The frozen benchmark uses 30/50/80 with the headline at 80. The current
+    script hardcodes ncells_list=(80,); it needs a --ncells flag. This is the
+    only code change Phase A requires.
+  cap_sweep: [2.0, 5.0, 10.0]
+  cap_note: >
+    The script reports frac_genes_capped but has never swept the cap. On slices
+    where median attenuation is ~0 (atlas mouse OOD), the cap is doing real work
+    and the result may be a cap artifact.
+
+  controls:
+    - id: A1_permuted_devar
+      description: >
+        Apply the SAME source-estimated scale vector with gene labels randomly
+        permuted, 10 permutations. This is the control E3 is missing.
+      why: >
+        source_devar inflates per-gene spread. If a gene-label-permuted vector
+        recovers most of the MMD gain, then the gain is "any variance inflation
+        moves an under-dispersed cloud toward the target" and NOT per-gene
+        calibration. This is the single most likely benign explanation of E3 and
+        it has not been excluded.
+    - id: A2_global_scalar_devar
+      description: >
+        Replace the per-gene vector with one scalar = median(1/sqrt(attenuation))
+        applied to all genes.
+      why: Separates per-gene structure from overall scale, same logic as A1.
+    - id: A3_identity_check
+      description: >
+        Assert r2_all and r2_markers are bitwise identical between raw and
+        source_devar in every seed/cap cell.
+      why: >
+        Mean preservation is algebraic. Any deviation is a bug, not a finding,
+        and invalidates the "free on the mean program" claim.
+
+  gates:
+    a_pass:
+      - source_devar reduces model_over_floor vs raw on atlas m1 AND m2 in at
+        least 4 of 5 metric seeds, at ncells=80 and at ncells=50
+      - the reduction survives cap=2.0 and cap=10.0 in direction
+      - A3 identity check passes in every cell
+      - A1 permuted control recovers LESS THAN HALF of the source_devar
+        reduction in model_over_floor (median over 10 permutations)
+    a_fail_meaning:
+      permuted_control_matches: >
+        E3 is variance inflation, not calibration. Report it as such, drop the
+        "source-estimated calibration" framing, and stop. Do not proceed to
+        Phase B.
+      seed_unstable: >
+        E3 is inside MMD noise. Report and stop.
+  report_only:
+    - mean_js
+    - frac_gap_closed_decoded
+    - decoded_denominator_calibrated
+    - source_attenuation_median
+    - frac_genes_capped_source
+  js_is_not_gated_because: >
+    E3d already established that MMD and mean JS disagree in sign on the atlas.
+    Gating on JS would reject a real multivariate improvement; hiding JS would
+    overclaim. So it is reported, always, and never gated.
+
+# --------------------------------------------------------------------------
+# Phase B: is it checkpoint-specific? (only if Phase A passes)
+# --------------------------------------------------------------------------
+phase_b:
+  status: gated_on_phase_a
+  name: does de-attenuation transfer to the hub models
+  rationale: >
+    A different model family is a stronger generalization test than a training
+    seed of the same one. If de-attenuation only helps the TF paper VAE, it is
+    a fix for that checkpoint's severe variance collapse (E1: ~0-23% variance
+    retention), not a general post-hoc correction.
+  cuts:
+    - hvg_pearson_residuals_m1_v08_ood
+    - hvg_pearson_residuals_m2_v08_ood
+    - hvg_pearson_residuals_a_uncapped_v08_ood
+  model_families:
+    - scgen          # latent mean-shift
+    - impact_cellot  # ICNN-OT
+  implementation:
+    new_script: cellot/cellot_gpu/scripts/devar_calibrated_metrics.py
+    pattern: sidecar
+    sidecar_name: devar_frame_metrics.csv
+    reuse: >
+      decoded_frame_metrics.py already loads clouds, calls
+      load_projectors(aedir, embedding, where) for encode/decode, and computes
+      treated_dec / control_dec plus mmd_ae_recon_floor and
+      mmd_decoded_ceiling. The new script reuses those loaders, derives the
+      per-gene scale from (control, control_dec), applies mean-preserving
+      de-attenuation to the imputed prediction AND to both reference clouds,
+      and writes the sidecar. readers.py picks it up.
+    do_not: edit evaluate.py or decoded_frame_metrics.py to add these columns
+  frame_rule: >
+    Corrected predictions are scored against correspondingly corrected
+    floor/ceiling. This is the error the first E3 run made; it is non-negotiable
+    and must be asserted in the script, not left to the caller.
+  gates:
+    b_pass:
+      - model_over_floor improves on at least 4 of the 6 cut x family cells
+      - r2 on gene means unchanged to within 1e-6 in every cell
+      - improvement is not confined to one model family
+    b_partial_meaning: >
+      If it helps scgen mean-shift but not impact_cellot (or vice versa), that
+      is itself informative: de-attenuation compensates for under-dispersion,
+      so it should help most where the transport output is most collapsed.
+      Report the model/floor ratio against each run's variance retention and
+      treat the relationship as the finding rather than forcing a verdict.
+
+promotion:
+  requires: [phase_a.a_pass, phase_b.b_pass]
+  then:
+    - update docs/conceptual_framework.md 5.9 with the calibrated-frame rule
+    - metric atlas canvas per .cursor/skills/metric-atlas-canvas
+  explicitly_not_claimed_without_retraining: >
+    Even a full pass shows only that a post-hoc decoder correction helps. It
+    does not show the AE or the transport map improved, and it does not license
+    a training-time variance term -- Round 3 already showed that changing means
+    to chase variance wrecks COD. The value of E3 is precisely that it is
+    mean-preserving.
+
+cost:
+  phase_a: inference only, existing checkpoints, CPU. 3 cuts x 5 seeds x 3 caps
+    plus permutation controls. Extends sbatch/lps/transport_calibration.sbatch.
+  phase_b: inference only, one new sidecar script, 6 runs.
+  retraining: none
+
+open_risk: >
+  The LPS decoded denominator is .0164 and ill-conditioned by the 5.9 rule, so
+  model_over_floor is the only readable statistic there. Phase A gates on the
+  atlas cuts for that reason; LPS is carried as a report-only contrast, which is
+  consistent with the flat model/floor result saying the LPS transport map, not
+  the AE, is binding.

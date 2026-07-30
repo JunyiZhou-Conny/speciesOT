@@ -1,0 +1,141 @@
+experiment_tag: lps_scgen_ae_followup
+question: >
+  Can cell-specific and distributional reconstruction improve while preserving
+  scGen Figure-5 all-gene and top-100-DEG perturbation prediction?
+
+data:
+  train: scgen-cellot-ablation/data/raw/train_species.h5ad
+  validation: scgen-cellot-ablation/data/raw/valid_species.h5ad
+  genes: 6619
+  held_out: rat LPS6
+  rat_unst_in_train: true
+
+frozen_training:
+  hidden_units: [800, 800]
+  latent_dim: 100
+  epochs: 300
+  batch_size: 32
+  learning_rate: 0.001
+  fixed_epoch_budget: true
+  historical_decoder_graph: true
+
+round1:
+  hypothesis: >
+    KL/stochastic sampling and dropout cause the paper VAE's cell-specific
+    variance collapse.
+  seed: 0
+  variants:
+    - tag: r1_vae_drop02
+      kind: vae
+      dropout: 0.2
+      alpha: 0.00005
+    - tag: r1_vae_drop0
+      kind: vae
+      dropout: 0.0
+      alpha: 0.00005
+    - tag: r1_dae_drop02
+      kind: dae
+      dropout: 0.2
+      alpha: 0.0
+    - tag: r1_dae_drop0
+      kind: dae
+      dropout: 0.0
+      alpha: 0.0
+
+gates:
+  identity:
+    heldout_cod_pergene_gt: 0.0
+    heldout_pearson_r2_pergene_baseline: 0.0861801438
+    reconstruction_mmd_baseline: 0.1124771235
+  transport_noninferiority:
+    all_gene_r2_floor: 0.897
+    top100_deg_r2_floor: 0.722
+  distribution:
+    decoded_gap_closed_baseline: -2.9569238238
+  selection:
+    eligibility: identity_improves_and_transport_noninferior
+    primary: heldout_cod_pergene
+    tiebreaker: reconstruction_mmd
+
+round2:
+  status: skipped
+  reason: >
+    Round 1 produced no eligible winner, and its model/floor MMD ratio was flat
+    (1.73-1.88) across all four variants, so latent capacity was not implicated.
+    Capacity is not tested.
+
+round3:
+  status: active
+  hypothesis: >
+    The MSE objective has no term rewarding correct per-gene cell ordering, so
+    adding a differentiable per-gene correlation loss (optionally with a
+    per-gene log-variance term) can raise paired-cell identity without losing
+    the Figure-5 mean program.
+  design: >
+    2x2 factorial at fixed z=100 and dropout 0.2 (Round 1's pairing-friendly
+    setting). All four runs use batch 256 because a per-gene correlation over
+    32 cells is too noisy; run A is the matched-batch MSE control, so every
+    Round-3 comparison is made within the batch-256 block.
+  leakage_guard: >
+    The correlation term is applied to ALL genes. The rat-LPS top-100 DEG list
+    is derived from the held-out condition and is used for evaluation only.
+  seed: 0
+  batch_size: 256
+  dropout: 0.2
+  latent_dim: 100
+  control_tag: r3_mse_b256
+  variants:
+    - tag: r3_mse_b256
+      kind: vae_aux
+      dropout: 0.2
+      alpha: 0.00005
+      corr_fraction: 0.0
+      variance_fraction: 0.0
+    - tag: r3_corr_b256
+      kind: vae_aux
+      dropout: 0.2
+      alpha: 0.00005
+      corr_fraction: 0.10
+      variance_fraction: 0.0
+    - tag: r3_var_b256
+      kind: vae_aux
+      dropout: 0.2
+      alpha: 0.00005
+      corr_fraction: 0.0
+      variance_fraction: 0.10
+    - tag: r3_corrvar_b256
+      kind: vae_aux
+      dropout: 0.2
+      alpha: 0.00005
+      corr_fraction: 0.10
+      variance_fraction: 0.10
+
+round3_gates:
+  reference: control_tag
+  rationale: >
+    Batch 256 at fixed 300 epochs means 8x fewer gradient steps than the paper
+    recipe, so Round-3 gates are relative to the matched-batch control rather
+    than to absolute Round-1 numbers.
+  primary:
+    metric: heldout_pearson_r2_pergene
+    must_exceed_control_by: 0.01
+  secondary:
+    metric: heldout_cod_pergene
+    must_exceed_control: true
+  guardrails:
+    all_gene_r2_max_drop_vs_control: 0.02
+    top100_deg_r2_max_drop_vs_control: 0.02
+  report_only:
+    - reconstruction_mmd
+    - variance_retention_median
+    - zero_fraction_recon
+    - deg_paired_pearson_r2
+    - heldout_pearson_r_percell
+    - frac_gap_closed_decoded
+
+confirmation:
+  seeds: [0, 1, 2]
+  compare: [round3_control, round3_winner]
+  trigger: round3_primary_and_guardrails_pass
+
+result_root: scgen-cellot-ablation/results/stage0_ae_followup

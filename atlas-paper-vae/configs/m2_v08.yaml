@@ -1,0 +1,48 @@
+# Runtime config for atlas-paper-vae scripts (mirrors specs/atlas_paper_vae_m2_v08.yaml).
+experiment_tag: atlas_paper_vae_m2_v08_ood
+# Modern hub h5ad (fingerprint source; analysis env). scgen_tf1 anndata 0.6 cannot read it.
+data_h5ad: cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/hvg_pearson_residuals_m2_v08.h5ad
+# Legacy pack for TF1 train/eval (exported by analysis env; same cells/genes/obs).
+data_legacy_dir: atlas-paper-vae/data/m2_v08_legacy
+result_dir: atlas-paper-vae/results/atlas_paper_vae_m2_v08_ood
+
+condition_column: condition
+source: mouse
+target: human
+cell_type_key: cell_type_ontology_term_id
+holdout_cell_types:
+  - CL:0000875
+  - CL:0000576
+
+datasplit:
+  strategy: toggle_ood
+  mode: ood
+  test_size: 0.2
+  random_state: 0
+  stratify: condition
+
+vae:
+  # Stage 0 / Lotfollahi VAEArith
+  z_dimension: 100
+  hidden_units: [800, 800]   # hard-coded in upstream _vae.py; documented for intent
+  alpha: 5.0e-5
+  dropout_rate: 0.2
+  learning_rate: 0.001
+  batch_size: 32
+  n_epochs: 300
+
+prediction:
+  rule: single_species_delta   # primary; not Fig.5 two-path
+  # δ = mean(z|human, train) - mean(z|mouse, train)
+  # apply to OOD mouse encodings, then decode
+
+eval:
+  ncells: [30, 50, 80]
+  headline_ncells: 80
+  seed: 0
+  honest_metrics_path: scgen-cellot-autoresearch/honest_metrics.py
+  scgen_code_path: scgen-cellot-ablation/scgen-reproducibility/code
+
+env:
+  conda: scgen_tf1
+  note: TF 1.15; PYTHONPATH must include scgen_code_path
