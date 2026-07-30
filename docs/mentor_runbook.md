@@ -158,8 +158,13 @@ bcg_unvax_predicted_human_via_{scgen,impact_cellot}_{seurat_v3,pearson_residuals
 
 `predict_new_input.sh` is mouse-only: it does the ortholog hop. A human file needs the
 same treatment **minus** the ortholog step, because the shared axis already *is* human
-Ensembl. There is no script for this yet; this is the snippet, and it is the one step
-of this path that has never been run end to end.
+Ensembl. There is no script for this yet; this is the snippet.
+
+**Watch the coverage number it prints.** Both this snippet and
+`predict_new_input.sh` silently fill missing genes with zeros. A run reporting
+`coverage 201/1000` means 80% of the model's input was zeros — it will still produce
+output, and that output will be meaningless. Anything below roughly 80% coverage
+should be treated as a data-preparation problem, not a modelling result.
 
 ```bash
 conda activate analysis
@@ -197,27 +202,51 @@ for flavor in ("seurat_v3", "pearson_residuals"):
 PY
 ```
 
-Then round-trip each output through the older AnnData format the `CellOT` env reads,
-exactly as `predict_new_input.sh` phase 2 does for the mouse side:
+**You must now convert each file to the older AnnData format**, and this is not
+optional. The `CellOT` env runs anndata 0.7.6, which cannot read a file written by a
+modern anndata; step 4 will abort with
+
+```
+AnnDataReadError: Above error raised while reading key '/layers' ...
+```
+
+This was hit during a real smoke test of this runbook, so expect it. Convert by
+handing the arrays across as plain `.npy`/`.csv`, which both versions agree on:
 
 ```bash
+# still in the analysis env: dump plain arrays
+conda activate analysis
+python - <<'PY'
+import anndata as ad, numpy as np, pandas as pd, scipy.sparse as sp
+base = ("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/cellot/cellot_gpu/datasets/"
+        "speciesot-human-mouse-hvg/bcg_unvax_human_target_{flavor}")
+for flavor in ("seurat_v3", "pearson_residuals"):
+    a = ad.read_h5ad(base.format(flavor=flavor) + ".h5ad")
+    X = a.X.toarray() if sp.issparse(a.X) else np.asarray(a.X)
+    np.save(base.format(flavor=flavor) + "_X.npy", X.astype("float32"))
+    pd.Series(a.obs_names).to_csv(base.format(flavor=flavor) + "_obs.csv", index=False, header=False)
+    pd.Series(a.var_names).to_csv(base.format(flavor=flavor) + "_var.csv", index=False, header=False)
+    print(flavor, "dumped", X.shape)
+PY
+
+# then rebuild them as v07 files
 conda activate CellOT
 python - <<'PY'
-import anndata as ad
+import anndata as ad, numpy as np, pandas as pd
 base = ("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/cellot/cellot_gpu/datasets/"
-        "speciesot-human-mouse-hvg/bcg_unvax_human_target_{flavor}.h5ad")
+        "speciesot-human-mouse-hvg/bcg_unvax_human_target_{flavor}")
 for flavor in ("seurat_v3", "pearson_residuals"):
-    p = base.format(flavor=flavor)
-    try:
-        print(flavor, ad.read_h5ad(p).shape, "readable as-is")
-    except Exception as e:
-        print(flavor, "NOT readable in CellOT env:", e)
-        print("  re-save it with the phase-2 converter in scripts/predict_new_input.sh")
+    b = base.format(flavor=flavor)
+    X = np.load(b + "_X.npy")
+    obs = pd.read_csv(b + "_obs.csv", header=None)[0].astype(str).tolist()
+    var = pd.read_csv(b + "_var.csv", header=None)[0].astype(str).tolist()
+    a = ad.AnnData(X=X, obs=pd.DataFrame(index=obs), var=pd.DataFrame(index=var))
+    a.write(b + "_v07.h5ad")
+    print(flavor, "wrote", a.shape, "->", b + "_v07.h5ad")
 PY
 ```
 
-If a file is not readable, copy the phase-2 block out of `scripts/predict_new_input.sh`
-(lines ~158–215) and point it at these files.
+Pass the `_v07.h5ad` files to `--target` in step 4.
 
 ### Step 4 — score the prediction against the real human cells (`CellOT` env, ~2–5 min, CPU)
 
@@ -307,7 +336,26 @@ autoencoder, so the comparison is like-for-like with the model's output.
 
 ### The warning that matters most
 
-**A gap-closed fraction computed on a small denominator is unreliable.** The fraction
+**Do not read the gap-closed fraction on its own — on garbage input it can look
+respectable.** This is measured, not hypothetical. Feeding the pipeline synthetic
+random counts (20% gene coverage, no biological signal at all) produced:
+
+| model | flavor | `model_over_floor` | `frac_gap_closed_decoded` | `r2_model_dec` |
+|---|---|---:|---:|---:|
+| impact_cellot | pearson_residuals | 4.27 | **+0.52** | 0.17 |
+| scgen | pearson_residuals | 9.34 | −0.23 | 0.22 |
+| impact_cellot | seurat_v3 | 5.60 | +0.21 | 0.07 |
+| scgen | seurat_v3 | 7.00 | −0.03 | 0.08 |
+
+The first row is the cautionary one: a **52% gap-closed fraction on pure noise.** Across
+the four runs the fraction swings from −0.23 to +0.52 on *identical* input, while
+`model_over_floor` stays consistently terrible (4.3–9.3, against 1.29 for a healthy
+run) and `r2_model_dec` stays near zero (against ~0.92).
+
+So `model_over_floor` and `r2_model_dec` are the reliable discriminators. Treat the
+gap-closed fraction as a summary to quote, never as the thing you judge by.
+
+**A gap-closed fraction computed on a small denominator is also unreliable.** The fraction
 divides by `decoded_denominator`. Ordinary run-to-run noise in the MMD estimate is
 about ±0.005, so the fraction wobbles by `0.005 / denominator` — the script prints this
 number for you. On the atlas the denominator is ~0.225, so the wobble is ±0.02 and the
@@ -379,6 +427,14 @@ lab, a different protocol, and a different tissue context.
 
 ## 6. What is not yet verified
 
+- **The full chain HAS been smoke-tested** (2026-07-30) on synthetic mouse counts built
+  from real ortholog-cache gene IDs. All three steps ran: `predict_new_input.sh` in 35 s
+  producing four predictions, and `eval_external_target.py` in ~20 s for each of the
+  four model × flavor combinations. The gene axis assertions, AE loading, floor/ceiling
+  construction and sidecar writing all work, and the metrics correctly identified the
+  synthetic input as meaningless. Two defects found in that run — the anndata-version
+  conversion in step 3, and the silent zero-fill on low coverage — are now documented
+  above.
 - The step-3 human-alignment snippet has **not** been executed against real human BCG
   data. The raw human BCG counts (GEO `GSE248728`, 14 10x capture matrices) sit under
   `/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/tb/data/human_bcg/`, but no
