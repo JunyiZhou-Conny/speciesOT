@@ -230,13 +230,19 @@ python scripts/eval_external_target.py \
   --pred   $D/bcg_unvax_predicted_human_via_impact_cellot_pearson_residuals.h5ad \
   --target $D/bcg_unvax_human_target_pearson_residuals.h5ad \
   --source $D/bcg_unvax_aligned_pearson_residuals_v07.h5ad \
-  --aedir  cellot/cellot_gpu/results/atlas_full_pearson_residuals/model-scgen \
+  --aedir  cellot/cellot_gpu/results/atlas_full_pearson_residuals/scgen \
   --tag    bcg_unvax_impact_pearson
 ```
 
 The three clouds are: what the model predicted, what the human cells really are, and
 what went in. `--aedir` must be the autoencoder belonging to the **same flavor** as the
-prediction (`atlas_full_seurat_v3/model-scgen` for the `seurat_v3` predictions).
+prediction (`atlas_full_seurat_v3/scgen` for the `seurat_v3` predictions).
+
+`--aedir` points at the **scgen** directory even when you are scoring an
+IMPACT_CellOT prediction. The ICNN does not carry its own autoencoder — its
+config declares `ae_emb.path: ./results/atlas_full_<flavor>/scgen/`, so both
+model families decode through the same one. (Ignore the empty `model-scgen/`
+directories; they exist throughout the results tree and are never populated.)
 
 Results are written to
 `results/external_eval/<tag>/external_target_metrics.{csv,json}` and printed to the
