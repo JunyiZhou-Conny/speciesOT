@@ -61,6 +61,11 @@ scgen-cellot-unbalanced/results/
 # Regenerable eval sidecars written by scripts/eval_external_target.py
 results/
 
+# mixhvg-py lives in its own repository ON PURPOSE. It is a GPL-3 derivative of
+# the R mixhvg package, so vendoring it here would make this repo GPL-3.
+# See docs/hub_usage.md "Ensemble HVG" for how to install it.
+mixhvg-py/
+
 # Test cache
 .pytest_cache/
 

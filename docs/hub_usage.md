@@ -267,7 +267,14 @@ Two extra flavors select genes by **combining several single-flavor scores** ins
 
 Each member scores every gene; scores become ascending ranks; each gene keeps the **best rank any member gave it**. It is a union, not an average — a gene one method loves and three hate is still selected.
 
-Requires the `mixhvg-py` package in the **analysis** env (`pip install -e mixhvg-py`), a Python port of the R original. Read `mixhvg-py/docs/fidelity.md` before quoting results: the Seurat-derived members reproduce R exactly, `scran`/`scran_pos`/`mv_PFlogPF` agree at Spearman 0.965–0.9998, and the recommended mixture matches R at Jaccard 0.98. The `mv_ct` and `mv_nc` members do **not** match and are excluded from both flavors. `mixhvg-py` is GPL-3, which the hub inherits if it becomes a hard dependency — see `mixhvg-py/NOTICE.md`.
+Requires the `mixhvg` package in the **analysis** env — a Python port of the R original, kept in a **separate repository** and deliberately not vendored here. The port is GPL-3 (a translation is a derivative work, and its `scran` reimplementations independently set that floor), so vendoring it would make this repo GPL-3 too. Install it from wherever you have it checked out:
+
+```bash
+conda activate analysis
+pip install -e /path/to/mixhvg-py
+```
+
+Read that package's `docs/fidelity.md` before quoting results. Measured against R (scran 1.30.0, Seurat 5.3.0): the Seurat-derived members reproduce R exactly, `scran`/`scran_pos`/`mv_PFlogPF` agree at Spearman 0.965–0.9998, and the recommended mixture matches R at Jaccard 0.98. The `mv_ct` and `mv_nc` members do **not** match and are excluded from both flavors. Cite the method as Zhao et al. 2024, [doi:10.1101/2024.08.25.608519](https://doi.org/10.1101/2024.08.25.608519).
 
 **Batch handling is deliberately borrowed, not invented.** mixhvg has no notion of batches, but `hvg_batch_key` defaults to `species` on every existing run, so prep computes the ensemble independently within each batch and combines batches by scanpy's `seurat_v3` rule (keep a gene's rank only in batches where it made that batch's top-`n_top`, then take the nanmedian, then break ties by batch count). Without this the comparison would confound "ensemble vs single flavor" with "batch-aware vs batch-blind". On a synthetic two-species check this recovers 19/20 planted species-specific genes, matching `pearson_residuals`; a naive median over full ranks recovers only 7/20 because it averages a good rank against a bad one and throws away single-species genes.
 
