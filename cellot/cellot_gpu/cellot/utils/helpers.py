@@ -1,4 +1,4 @@
-from collections import MutableMapping
+from collections.abc import MutableMapping
 import yaml
 from ml_collections import ConfigDict
 from pathlib import Path

@@ -1,0 +1,441 @@
+# Research log — 2026-07-30 / 2026-08-03
+# Environment modernization: one conda env that reads BOTH h5ad formats
+#                            and runs the models (CellOT_v3)
+
+## Decision
+
+ADOPT CellOT_v3, gated on one one-line change to the vendored cellot package.
+
+A single environment that reads old (anndata 0.7) and modern (anndata 0.12)
+.h5ad files AND runs the trained models is achievable, and CellOT_v3 is that
+environment. Every validation check below passed. The cross-environment file
+barrier is removable, not merely workaround-able.
+
+The one blocker found is in OUR repo, not in a dependency, and the fix is
+backward-compatible with python 3.9 (verified), so it can land without
+touching the existing envs.
+
+## Problem being solved (context, already diagnosed — not re-derived here)
+
+  analysis    python 3.12, anndata 0.12.10, scanpy 1.12   -- data prep
+  CellOT      python 3.9.5, anndata 0.7.6, torch 1.11.0+cu102, scanpy 1.8.1,
+              numpy 1.19.5, pandas 1.2.5                  -- hub, training, eval
+  CellOT_gpu  python 3.9.23, anndata 0.7.6, torch 2.3.1+cu121, scanpy 1.8.1
+
+anndata 0.7.6's EncodingVersions enum has exactly one member, 'raw'. Modern
+anndata tags every group with an encoding-type (dict / dataframe / categorical
+/ csr_matrix), so 0.7.6 raises KeyError: 'dict' on ANY modern file. The
+existing workaround, scripts/h5ad_to_v07.py, reads with h5py and rewrites with
+anndata 0.7. It stays useful and is NOT being removed; CellOT_v3 is the
+permanent fix alongside it.
+
+## What was built
+
+New env, created fresh (NOT cloned — cloning on this filesystem is
+impractically slow; the bare `conda create` alone took 5m13s).
+
+Exact commands:
+
+  export PIP_CACHE_DIR=/tmp/pipcache_jz
+  export TMPDIR=/tmp
+
+  conda create -y -p /n/home01/jzhou1125/.conda/envs/CellOT_v3 \
+      -c conda-forge --override-channels python=3.11 pip
+
+  PY=/n/home01/jzhou1125/.conda/envs/CellOT_v3/bin/python
+
+  $PY -m pip install torch==2.3.1 \
+      --index-url https://download.pytorch.org/whl/cu121
+
+  $PY -m pip install \
+      "numpy==1.26.4" "pandas==2.2.3" "scipy==1.13.1" "h5py==3.11.0" \
+      "anndata==0.10.9" "scanpy==1.10.4" "scikit-learn==1.5.2" \
+      "matplotlib==3.9.2" "seaborn==0.13.2" "statsmodels==0.14.4" \
+      "numba==0.60.0" "llvmlite==0.43.0" "umap-learn==0.5.6" \
+      "pynndescent==0.5.13" "ml-collections==0.1.0" "absl-py==2.1.0" \
+      "PyYAML==6.0.2" "tqdm==4.67.1" "natsort==8.4.0"
+
+Note: the torch install failed once mid-transaction with
+
+  OSError: [Errno 2] No such file or directory:
+    '.../envs/CellOT_v3/bin/isympy'
+
+which is transient NFS flakiness on this filesystem, not a resolution
+conflict. Re-running the same command succeeded. Expect to retry installs here.
+
+Env size on disk: 7.2 GB (CellOT_gpu is 7.5 GB for comparison).
+Location: /n/home01/jzhou1125/.conda/envs/CellOT_v3 (so `conda activate
+CellOT_v3` works with no config change).
+
+### Design choices and why
+
+- python 3.11, not 3.12: keeps a wide wheel selection and avoids the distutils
+  removal. 3.10 would also work.
+- torch 2.3.1+cu121, byte-identical to what CellOT_gpu already runs. This
+  deliberately holds the GPU stack constant so that any numerical difference
+  observed is attributable to numpy/pandas/python, not to torch. It also means
+  CellOT_v3 is a drop-in for CellOT_gpu on the GPU side.
+- numpy 1.26.4, not numpy 2.x: torch 2.3.1 is compiled against numpy 1.x and
+  emits a hard "module compiled using NumPy 1.x cannot be run in NumPy 2.x"
+  failure under numpy 2. Moving to numpy 2 requires torch >= 2.4.1 and is a
+  separate, larger decision.
+- anndata 0.10.9, not 0.11/0.12: 0.10.x is the newest line that still ships
+  `anndata.read` as a deprecated alias. cellot/data/cell.py:59 calls
+  `anndata.read(path)`; anndata 0.11 removed it. Choosing 0.10.9 keeps the
+  required repo change to ONE line instead of two. 0.10.9 reads both formats,
+  which is the whole point.
+- scanpy 1.10.4: the matching scanpy line for anndata 0.10 + pandas 2.
+
+### Full validated package list (pip freeze, CellOT_v3)
+
+  python                3.11.15  (conda-forge, GCC 14.3.0)
+  absl-py               2.1.0          natsort            8.4.0
+  anndata               0.10.9         networkx           3.6.1
+  array-api-compat      1.15.0         numba              0.60.0
+  contextlib2           21.6.0         numpy              1.26.4
+  contourpy             1.3.3          packaging          (conda)
+  cycler                0.12.1         pandas             2.2.3
+  filelock              3.29.0         patsy              1.0.2
+  fonttools             4.63.0         pillow             12.3.0
+  fsspec                2026.4.0       pynndescent        0.5.13
+  h5py                  3.11.0         pyparsing          3.3.2
+  Jinja2                3.1.6          python-dateutil    2.9.0.post0
+  joblib                1.5.3          pytz               2026.3.post1
+  kiwisolver            1.5.0          PyYAML             6.0.2
+  legacy-api-wrap       1.5            scanpy             1.10.4
+  llvmlite              0.43.0         scikit-learn       1.5.2
+  MarkupSafe            3.0.3          scipy              1.13.1
+  matplotlib            3.9.2          seaborn            0.13.2
+  ml-collections        0.1.0          session_info       1.0.1
+  mpmath                1.3.0          six                1.17.0
+                                       statsmodels        0.14.4
+  torch                 2.3.1+cu121    stdlib-list        0.12.0
+  triton                2.3.1          sympy              1.14.0
+  typing_extensions     4.15.0         threadpoolctl      3.6.0
+  tzdata                2026.3         tqdm               4.67.1
+  umap-learn            0.5.6
+
+  plus the nvidia-*-cu12 wheels pulled in by torch 2.3.1+cu121
+  (cublas 12.1.3.1, cudnn 8.9.2.26, nccl 2.20.5, etc.), identical set to
+  CellOT_gpu.
+
+## Validation
+
+All checks were run on a CPU compute node (holy7c04207, 1 core, no GPU).
+
+### Check A — reads BOTH h5ad formats                                    PASS
+
+The make-or-break check.
+
+- legacy v07 file: cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/
+  hvg_pearson_residuals_atlas_full_v07.h5ad  -> read OK, shape 8610 x 1000
+- a file written by the analysis env's anndata 0.12.10                -> read OK
+
+Both confirmed. Every dataset on disk is v07, so failing the first would have
+made the env useless; it does not fail.
+
+Corollary worth stating: anndata 0.10.9 is bidirectionally compatible here, so
+CellOT_v3 can consume `./hub prep` output directly with no round-trip.
+
+### Check B — import the vendored cellot package                 FAIL, then PASS
+
+First attempt failed:
+
+  File ".../cellot/utils/helpers.py", line 1, in <module>
+      from collections import MutableMapping
+  ImportError: cannot import name 'MutableMapping' from 'collections'
+
+MutableMapping moved to collections.abc in python 3.3; the `collections`
+alias was removed in python 3.10. This is the ONLY python-3.10+ breakage in
+the vendored package — a grep over cellot/ for the usual removals
+(`from collections import`, np.float/np.int/np.bool/np.object, imp,
+time.clock, inspect.getargspec) turns up nothing else. The two other
+`from collections import namedtuple` hits (models/cellot.py:3, models/ae.py:3)
+are fine.
+
+Required change, one line:
+
+  cellot/cellot_gpu/cellot/utils/helpers.py:1
+  -   from collections import MutableMapping
+  +   from collections.abc import MutableMapping
+
+Verified back-compatible: `from collections.abc import MutableMapping` imports
+cleanly under the legacy CellOT env's python 3.9.5, so this can land on main
+without disturbing CellOT / CellOT_gpu / analysis.
+
+Per instructions this change was NOT applied to the repo. To finish validating
+without editing the repo, a throwaway overlay was used:
+
+  /tmp/cellot_v3_overlay/
+      cellot/          <- full copy of the package with the one line patched
+      datasets -> symlink to cellot/cellot_gpu/datasets
+      results  -> symlink to cellot/cellot_gpu/results
+      configs, assets, scripts -> symlinks
+
+and driven with PYTHONPATH=/tmp/cellot_v3_overlay (plus --cellot-dir for
+eval_external_target.py, which chdir()s into it to resolve relative config
+data paths). Everything below was run against that overlay; the only
+difference from the real package is that one import line.
+
+With the overlay:
+
+  import cellot                                       OK
+  from cellot.utils.loaders import load_model, load_data   OK
+  from cellot.models import load_autoencoder_model    OK
+
+### Check C — load the trained checkpoints                              PASS
+
+Same calls scripts/predict_new_input.sh phase 3 makes.
+
+  atlas_full_pearson_residuals/scgen/cache/model.pt
+      load_autoencoder_model(config, restore=..., device=cpu, input_dim=1000)
+      -> loaded; had no code_means, so load_data(...) + compute_scgen_shift()
+         ran and produced code_means for {human, mouse}
+  atlas_full_pearson_residuals/impact_cellot/cache/model.pt
+      load_model(config, restore=..., device=cpu, input_dim=50)  -> f, g
+      + the model-scgen AE via load_autoencoder_model               -> loaded
+
+torch.load: NO code change needed, and this was checked explicitly rather
+than assumed.
+
+  torch.load(ckpt, map_location='cpu')                     SUCCEEDED
+      keys: ['eval_loss', 'model_state', 'optim_state', 'step']
+  torch.load(ckpt, map_location='cpu', weights_only=True)  SUCCEEDED
+
+torch 2.3.1 still defaults to weights_only=False, so the current calls work
+as-is. More importantly, weights_only=True ALSO succeeds on these
+checkpoints — they contain only tensors and plain containers — so a future
+move to torch >= 2.6 (where the default flips to True) will not break
+cellot/models/{ae,cellot}.py:41/95 or cellot/train/{utils,train}.py:18/36
+either. This risk is retired, not deferred.
+
+Non-fatal warnings only:
+  - anndata: "`anndata.read` is deprecated ... will be removed in mid 2024"
+    (cellot/data/cell.py:59). Works on 0.10.9; would be a hard error on 0.11+.
+  - pandas: "The default of observed=False is deprecated and will be changed
+    to True in a future version" at cellot/data/cell.py:222 and :268. Works on
+    pandas 2.2.3; will need `observed=False` passed explicitly before pandas 3.
+
+### Check D — numerical agreement, old env vs new env                   PASS
+
+This is the check that matters most, and it is clean.
+
+Setup: 400 synthetic mouse cells over a 3,500-gene panel built from REAL
+ENSMUSG ids — 3,000 sampled (seed 20260730) from
+scripts/.biomart_ortholog_cache.csv plus 500 syntactically valid ENSMUSG ids
+deliberately absent from the cache, so the ortholog mapping actually has to
+drop things. Counts are Poisson with gene-specific means and cell-specific
+depth (total 1,909,017 counts, 56.1% zeros, max 56). The matrix is handed to
+both envs as a plain .npz so the comparison isolates the model code path
+rather than the h5ad interchange (tested separately in Check A).
+
+Both envs then ran predict_new_input.sh phase 1 (ENSMUSG -> ENSG via the
+BioMart cache, projection onto the 1,000-gene atlas axis, normalize_total
+1e4, log1p) and phase 3 (scgen shift, and impact_cellot ICNN transport).
+Ortholog coverage came out at 200/1000 (20.0%) in BOTH envs — identical, so
+the mapping logic is version-stable.
+
+  array          shape          max|diff|    mean|diff|   scale(max|a|)
+  ------------------------------------------------------------------------
+  x_numpy        (400, 1000)    4.768e-07    1.207e-09       7.079556
+  x_scanpy       (400, 1000)    4.768e-07    1.150e-09       7.079556
+  codes_scgen    (400,   50)    1.192e-06    5.267e-08       6.379001
+  shift          (50,)          0.000e+00    0.000e+00       3.300994
+  pred_scgen     (400, 1000)    8.345e-07    1.356e-08       3.857834
+  codes_impact   (400,   50)    1.192e-06    5.267e-08       6.379001
+  pred_impact    (400, 1000)    4.768e-06    4.437e-08       7.117294
+
+  float32 eps = 1.192e-07
+
+  pred_scgen  : max|diff| = 8.345e-07  (tolerance 3.858e-04)  -> AGREE
+                = 1.97e-06 of the prediction's own std (0.4247)
+  pred_impact : max|diff| = 4.768e-06  (tolerance 7.117e-04)  -> AGREE
+                = 8.69e-06 of the prediction's own std (0.5487)
+
+Verdict: AGREE, at float32 round-off. The scGen predictions differ by about
+7 float32 ulps at their scale; the IMPACT predictions by about 40 ulps, which
+is the expected accumulation through an ICNN transport plus a decoder pass.
+Nothing here is a behavioural difference.
+
+Two results inside this deserve to be called out:
+
+1. The scGen shift vector is BIT-IDENTICAL (max|diff| exactly 0.0). That
+   vector is produced by load_data() -> read_single_anndata() ->
+   split_cell_data() -> sklearn train_test_split -> compute_scgen_shift over
+   the train split. Getting 0.0 means the train/test split is bit-stable
+   across sklearn 1.1.1 -> 1.5.2 and pandas 1.2.5 -> 2.2.3, including the
+   `groupby(...).groups` path that emits the observed=False FutureWarning.
+   The pandas-2 groupby deprecation is cosmetic here, not behavioural.
+
+2. scanpy's normalize_total+log1p agrees with a plain-numpy equivalent to
+   4.768e-07 within each env, and across envs (scanpy 1.8.1 vs 1.10.4) to the
+   same 4.768e-07. Preprocessing is not a source of drift either.
+
+### Check E — eval_external_target.py on the frozen benchmark           PASS
+
+Ran under CellOT_v3 on the atlas m1 v08 OOD self-test: held-out mouse as
+--source, held-out human as --target, the saved IMPACT prediction as --pred,
+--aedir cellot/cellot_gpu/results/hvg_pearson_residuals_m1_v08_ood/scgen,
+defaults otherwise (ncells 30,50,80; n_reps 10; random_state 0; 50 derived
+markers). Output written to /tmp to avoid creating repo files.
+
+Headline, ncells=80:
+
+  quantity                  canonical sidecar   CellOT_v3      |diff|
+  ------------------------------------------------------------------------
+  mmd_model                 0.1035698677353707  0.1035698668883952  8.47e-10
+  mmd_ae_recon_floor        0.0804585616606437  0.0804585625031628  8.43e-10
+  mmd_decoded_ceiling       0.3056661263523975  0.3056661271949163  8.43e-10
+  frac_gap_closed_decoded   0.8973777541337926  0.8973777616357367  7.50e-09
+  r2_model_dec              0.9224542230145460  0.9224542262198108  3.21e-09
+  r2_self_dec               0.9975873648872090  0.9975873648872090  0.00e+00
+  r2_identity_dec           0.5778752370007496  0.5778752370007496  0.00e+00
+  frac_r2_closed_decoded    0.8209888709887649  0.8209888786255820  7.64e-09
+
+  model_over_floor          expected ~1.29      1.2872448086
+
+Expected 0.8974 / 1.29; got 0.8974 / 1.2872. Match.
+
+The residual ~1e-9 against the sidecar is NOT an environment effect. The
+sidecar was produced by decoded_frame_metrics.py and this run by
+eval_external_target.py — two different script paths. Running
+eval_external_target.py under the LEGACY CellOT env gives 0.8973777616357368,
+i.e. the same ~7.5e-9 offset from the sidecar. Comparing like with like:
+
+  CellOT_v3 vs the SAME script under legacy CellOT, all 17 metric columns
+  at all three ncells:
+
+      LARGEST ABSOLUTE DIFFERENCE ANYWHERE: 4.441e-16
+      (model_over_floor @ ncells=30)
+
+That is double-precision round-off — the two environments produce effectively
+bit-identical eval output.
+
+### Check F — the hub                                                    PASS
+
+Run as `python -m speciesOT.hub.cli {list,scorecard}` under the CellOT_v3
+interpreter from the workspace root. The `hub` wrapper was NOT edited (it
+hardcodes `conda activate CellOT`).
+
+  CellOT_v3 : 194 models discovered across 2 root(s)
+  legacy    : 194 models discovered across 2 root(s)
+
+  diff of `list` output        -> BYTE-IDENTICAL
+  diff of `scorecard` output   -> BYTE-IDENTICAL
+
+Two expectations in the task did not match, and both are repo state, not the
+environment — proven by the byte-identical legacy run:
+
+  - 194 models, not 188. Six additional models exist since the 188 figure was
+    recorded; the mixhvg v08 runs (hvg_mixhvg_{a_uncapped,m1,m2}_v08_ood, both
+    families) are the new entries.
+  - Top scorecard row is now
+        gpu/hvg_mixhvg_a_uncapped_v08_ood/impact_cellot   fgc 1.032
+    The expected row IS present at exactly the expected value, ranked second:
+        gpu/hvg_pearson_residuals_a_uncapped_v08_ood/impact_cellot  fgc 0.935
+    (fr2 0.846, mean_js 0.451, R^2 0.921, done)
+
+So the hub is unaffected by the env; the leaderboard simply moved on. The
+mixhvg fgc of 1.032 (> 1, i.e. nominally below the AE floor) is worth a
+separate look, but that is a science question, not an env question.
+
+## Code changes CellOT_v3 requires
+
+REQUIRED (1, blocking):
+
+  cellot/cellot_gpu/cellot/utils/helpers.py:1
+      from collections import MutableMapping
+   -> from collections.abc import MutableMapping
+
+  Back-compatible with python 3.9 (verified under the legacy CellOT env), so
+  it is safe to land on main immediately and costs the existing envs nothing.
+  NOT APPLIED — validated via a patched copy in /tmp/cellot_v3_overlay.
+
+NOT REQUIRED, contrary to expectation:
+
+  torch.load(..., weights_only=...) needs no change. torch 2.3.1 still
+  defaults to False, and weights_only=True was tested directly and also
+  loads these checkpoints, so torch >= 2.6 is pre-cleared too.
+
+DEFERRED (warnings today, breakage on the next major bump):
+
+  cellot/cellot_gpu/cellot/data/cell.py:59
+      anndata.read(path) -> anndata.read_h5ad(path)
+      Needed only if moving past anndata 0.10.x. One line.
+
+  cellot/cellot_gpu/cellot/data/cell.py:222, :268
+      groupby(...) -> groupby(..., observed=False)
+      Needed only before pandas 3. Behaviour verified unchanged today (the
+      bit-identical scGen shift in Check D proves it).
+
+  cellot/cellot_gpu/cellot/utils/evaluate.py:41-42
+      DataFrame.applymap -> DataFrame.map
+      Deprecated in pandas 2.1, removed in pandas 3. Not on any path
+      exercised above (compute_knn_enrichment), so untested here.
+
+  cellot/cellot_gpu/cellot/data/cell.py:85
+      data.obs["transport"].fillna("target", inplace=True)
+      Chained inplace assignment; a no-op warning today, an error under
+      pandas 3 copy-on-write. Only reached when config.data.target == "all",
+      which none of the configs exercised above use. Untested.
+
+## Recommendation
+
+Adopt CellOT_v3 as the single env for the hub, eval, prediction and
+(unvalidated on hardware, see below) GPU training. Keep CellOT and CellOT_gpu
+in place untouched as the fallback until a GPU training run has been
+reproduced on CellOT_v3.
+
+Migration, in order:
+
+  1. Land the one-line helpers.py fix on main. Harmless to the existing envs.
+  2. Run one GPU training job on CellOT_v3 (see "not verified" below) and
+     compare its loss curve / final checkpoint against a CellOT_gpu run.
+  3. Point the `hub` wrapper at CellOT_v3: `hub:15,32,33,38`. The wrapper is
+     the only thing that must change for `./hub` to work; the CLI itself is
+     already byte-identical under both interpreters.
+  4. Update the hardcoded interpreter paths:
+       scripts/predict_new_input.sh:38    CELLOT_PY=
+       scripts/biomart_watchdog.py:31     CELLOT_PY=
+       speciesOT/baseline/analysis/19_uncapped_cd8_ood_data_prep.py:66
+  5. Once CellOT_v3 is the default, phase 2 of predict_new_input.sh (the
+     v07 round-trip, lines 148-215) becomes unnecessary — CellOT_v3 reads the
+     analysis env's output directly. Delete it from the script only after
+     step 2 passes. Keep scripts/h5ad_to_v07.py: it is still the way to make
+     a file readable by the legacy envs, which are staying.
+  6. Update docs/hub_usage.md:24,368 and docs/mentor_runbook.md:218,243,458.
+  7. Consider collapsing `analysis` into CellOT_v3 as well. Not attempted
+     here — CellOT_v3 has scanpy 1.10.4 vs analysis's 1.12, and `./hub prep`
+     HVG selection was not tested under it. Treat as a separate task.
+
+Also worth doing once adopted: pin this stack in a requirements file next to
+cellot/cellot_gpu/requirements-gpu.txt so it is reproducible, since it was
+built by explicit pins rather than a solver file.
+
+## What was NOT verified
+
+State plainly, because a partially validated env is a partially validated env:
+
+- GPU. Everything ran on a CPU node with no nvidia-smi. torch 2.3.1+cu121 is
+  installed and is the identical build CellOT_gpu already uses on H100/H200,
+  so the risk is low, but CUDA was never exercised and no training step was
+  run. This is the one gap that should close before CellOT_v3 becomes the
+  default for training.
+- Training. Only inference/restore paths were tested. No optimizer step, no
+  checkpoint WRITE, no cellot/train/*.py path.
+- `./hub prep`. The prep path (HVG selection, prep_backed.py, the 43 GB atlas)
+  was not run under CellOT_v3. scanpy 1.10.4 != the analysis env's 1.12.
+- `./hub` subcommands beyond `list` and `scorecard` — generate, metrics,
+  vault, card, show, compare — were not run.
+- The deferred pandas items above (applymap, the fillna inplace) sit on code
+  paths none of these checks touch.
+- numpy 2.x. Explicitly avoided, not tested; it needs torch >= 2.4.1.
+
+## Artifacts (throwaway, /tmp — will not survive)
+
+  /tmp/cellot_v3_overlay/          patched copy of the cellot package
+  /tmp/synth_counts.npz            the 400-cell synthetic mouse input
+  /tmp/pred_v3.npz, pred_old.npz   predictions from each env
+  /tmp/v3_eval_out/                eval_external_target output under CellOT_v3
+  /tmp/v3_check12.log, v3_step4.log, v3_step4_cmp.log,
+  /tmp/v3_hub_{list,scorecard}.log, /tmp/old_hub_{list,scorecard}.log
