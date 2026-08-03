@@ -1,0 +1,68 @@
+experiment_tag: hvg_mixhvg_a_uncapped_v08_iid
+derived_from: gpu/hvg_mixhvg_a_uncapped_v08_ood/impact_cellot
+data_source: speciesot-human-mouse-hvg
+data_file: datasets/speciesot-human-mouse-hvg/hvg_mixhvg_a_uncapped_v08.h5ad
+source_datasets:
+  mouse: /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_muris/tabula_muris_all.h5ad
+  human: /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_sapiens/tabula_sapiens_all.h5ad
+assay_filter:
+  mouse:
+  - chromium_v2
+  human:
+  - chromium_v3
+cap_cells_per_type:
+  mouse: null
+  human: null
+ortholog_source: biomart
+source_backed: true
+hvg_method: mixhvg
+hvg_n_top: 1000
+hvg_input_layer: layers['counts']
+hvg_batch_key: species
+log1p_applied: true
+condition_column: condition
+source: mouse
+target: human
+holdout_cell_types:
+- CL:0000625
+holdout_species: null
+datasplit_strategy: toggle_ood
+mode: iid
+test_size: 0.2
+random_state: 0
+datasplit_stratify: condition
+scgen_hidden_units:
+- 256
+- 256
+scgen_latent_dim: 50
+scgen_lr: 0.001
+scgen_batch_size: 256
+scgen_n_iters: 50000
+impact_hidden_units:
+- 64
+- 64
+- 64
+- 64
+impact_latent_dim: 50
+impact_lr: 0.0001
+impact_batch_size: 128
+impact_n_iters: 50000
+impact_n_inner_iters: 10
+impact_train_device: cpu
+data_space_n_cells: 30,50,80
+notes: >
+  DEPLOYMENT twin of specs/atlas_full_pearson_v08_iid.yaml, differing ONLY in
+  hvg_method: mixhvg (the rank-max ensemble of scran / seuratv1 / mv_PFlogPF /
+  scran_pos) instead of pearson_residuals. Same cells, same assay filter, same
+  architecture, same seed, mode: iid so nothing is withheld.
+
+  Purpose is the one-factor comparison: does ensemble HVG selection produce a
+  better deployment model than the single-flavor incumbent? Its ood twin
+  currently tops the scorecard at fgc 1.032, but a fraction above 1.0 means the
+  prediction beat its own AE reconstruction floor, and that cut's floor (0.139)
+  is 74% worse than the pearson_residuals floor (0.080) on the same task. So the
+  ensemble may be scoring well against a weaker yardstick rather than predicting
+  better -- R2 is 0.920 vs 0.921, indistinguishable. Read the floor before
+  reading the fraction.
+
+  Reuses hvg_mixhvg_a_uncapped_v08.h5ad; no new prep.
