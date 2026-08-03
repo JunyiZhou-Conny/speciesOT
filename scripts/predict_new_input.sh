@@ -19,6 +19,17 @@
 # crossing them would not error -- it would silently predict from the wrong genes.
 # The preflight below asserts axis == checkpoint and aborts if they disagree.
 #
+# Baked sidecars (optional, but they remove the training atlas from the handover):
+#   results/<tag>/genes.txt                  the model's 1,000-gene axis
+#   results/<tag>/scgen/cache/scgen_shift.pt the scGen latent shift (code_means)
+# Written by scripts/bake_model_artifacts.py. When both are present this script
+# never opens the 35 MB-per-flavor training .h5ad: phase 1 projects onto
+# genes.txt, and phase 3 reads the shift instead of re-encoding the whole
+# training set. The shift records the gene-axis sha256 it was computed against
+# and is refused if that does not match the axis in use. When the sidecars are
+# absent the original behaviour (read the atlas, recompute the shift) is used, so
+# model sets that have not been baked still work unchanged.
+#
 # Requirements for input file:
 #   - AnnData h5ad with mouse cells.
 #   - Gene names in .var_names: either mouse Ensembl (ENSMUSG*) or symbols.
@@ -181,11 +192,17 @@ mkdir -p "$OUTDIR"
 # Phase 0: assert every checkpoint's own training gene axis is the axis we are
 # about to project onto. This runs BEFORE anything is written, so a mismatch
 # costs nothing and, more importantly, cannot produce a plausible-looking file.
+#
+# The axis of record is <results>/<tag>/genes.txt when it exists (written by
+# scripts/bake_model_artifacts.py), because it lives inside the checkpoint's own
+# directory and so cannot be crossed with another model set's axis. When both it
+# and the training .h5ad are present they must agree, and when only the sidecar
+# is present the training dataset is not needed at all.
 echo ""
 echo "=== Phase 0: preflight -- gene axis must match the checkpoints ==="
 $CELLOT_PY - "$OUTDIR" "$BASE/cellot/cellot_gpu" "$FLAVORS_STR" \
              "$RESULTS_TEMPLATE" "$AXIS_TEMPLATE" <<'PY'
-import sys, os, h5py, yaml
+import sys, os, hashlib, h5py, yaml
 
 OUTDIR, CELLOT_DIR, FLAVORS, RESULTS_TEMPLATE, AXIS_TEMPLATE = sys.argv[1:6]
 FLAVORS = FLAVORS.split()
@@ -200,18 +217,51 @@ def var_names(path):
         return [v.decode() if isinstance(v, bytes) else str(v) for v in g[key][:]]
 
 
+def read_gene_list(path):
+    with open(path) as fh:
+        return [line for line in fh.read().split("\n") if line != ""]
+
+
+def gene_axis_sha256(genes):
+    """Must stay identical to bake_model_artifacts.gene_axis_sha256."""
+    h = hashlib.sha256()
+    for g in genes:
+        h.update(str(g).encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
 ok = True
 for flavor in FLAVORS:
     results_subdir = RESULTS_TEMPLATE.replace("{flavor}", flavor)
+    tag_dir = f"{CELLOT_DIR}/results/{results_subdir}"
     axis_path = f"{OUTDIR}/{AXIS_TEMPLATE.replace('{flavor}', flavor)}"
-    if not os.path.exists(axis_path):
-        print(f"  ERROR [{flavor}] gene axis file not found: {axis_path}")
+    genes_txt = f"{tag_dir}/genes.txt"
+
+    axis_genes, axis_source = None, None
+    if os.path.exists(genes_txt):
+        axis_genes, axis_source = read_gene_list(genes_txt), genes_txt
+    if os.path.exists(axis_path):
+        h5_genes = var_names(axis_path)
+        if axis_genes is None:
+            axis_genes, axis_source = h5_genes, axis_path
+        elif h5_genes != axis_genes:
+            print(f"  ERROR [{flavor}] SIDECAR/DATASET AXIS MISMATCH")
+            print(f"          {genes_txt} ({len(axis_genes)} genes)")
+            print(f"          disagrees with {axis_path} ({len(h5_genes)} genes)")
+            print( "          One of the two is stale. Re-run")
+            print( "          scripts/bake_model_artifacts.py --force. Refusing to run.")
+            ok = False
+            continue
+    if axis_genes is None:
+        print(f"  ERROR [{flavor}] no gene axis available: neither {genes_txt}")
+        print(f"          nor {axis_path} exists")
         ok = False
         continue
-    axis_genes = var_names(axis_path)
+    axis_sha = gene_axis_sha256(axis_genes)
 
     for model_name in ("scgen", "impact_cellot"):
-        cfg_path = f"{CELLOT_DIR}/results/{results_subdir}/{model_name}/config.yaml"
+        cfg_path = f"{tag_dir}/{model_name}/config.yaml"
         with open(cfg_path) as fh:
             cfg = yaml.safe_load(fh)
         # config.data.path is relative to cellot/cellot_gpu (where training ran).
@@ -219,23 +269,52 @@ for flavor in FLAVORS:
         if not os.path.isabs(train_path):
             train_path = os.path.join(CELLOT_DIR, train_path)
         if not os.path.exists(train_path):
-            print(f"  ERROR [{flavor}/{model_name}] training dataset named in "
-                  f"{cfg_path} does not exist: {train_path}")
-            ok = False
+            if axis_source == genes_txt:
+                # Sidecar handover: the axis came out of the checkpoint's own
+                # directory, so there is nothing left for the atlas to prove.
+                print(f"  OK    [{flavor}/{model_name}] {len(axis_genes)} genes "
+                      f"(axis from genes.txt; training dataset absent, not needed)")
+            else:
+                print(f"  ERROR [{flavor}/{model_name}] training dataset named in "
+                      f"{cfg_path} does not exist: {train_path}")
+                print( "          and no genes.txt sidecar is present to stand in for it.")
+                print( "          Run scripts/bake_model_artifacts.py while the dataset")
+                print( "          is still available, or restore the dataset.")
+                ok = False
             continue
         train_genes = var_names(train_path)
 
         if train_genes == axis_genes:
-            same = "same file" if os.path.realpath(train_path) == os.path.realpath(axis_path) else "same axis"
-            print(f"  OK    [{flavor}/{model_name}] {len(axis_genes)} genes ({same})")
+            same = "same file" if os.path.realpath(train_path) == os.path.realpath(axis_source) else "same axis"
+            print(f"  OK    [{flavor}/{model_name}] {len(axis_genes)} genes ({same} "
+                  f"as {os.path.basename(axis_source)})")
         else:
             shared = len(set(train_genes) & set(axis_genes))
             print(f"  ERROR [{flavor}/{model_name}] GENE AXIS MISMATCH")
-            print(f"          projecting onto : {axis_path} ({len(axis_genes)} genes)")
+            print(f"          projecting onto : {axis_source} ({len(axis_genes)} genes)")
             print(f"          model trained on: {train_path} ({len(train_genes)} genes)")
             print(f"          genes in common : {shared}")
             print( "          Vector positions would mean different genes, so the")
             print( "          prediction would be silently wrong. Refusing to run.")
+            ok = False
+
+    # The scGen shift sidecar carries the axis it was computed against. Check it
+    # here too, so a stale shift aborts before anything is written rather than in
+    # phase 3 after the aligned files exist.
+    shift_pt = f"{tag_dir}/scgen/cache/scgen_shift.pt"
+    if os.path.exists(shift_pt):
+        import torch
+        rec = torch.load(shift_pt, map_location="cpu").get("gene_axis_sha256")
+        if rec == axis_sha:
+            print(f"  OK    [{flavor}/scgen] scgen_shift.pt axis sha256 matches "
+                  f"({axis_sha[:12]}...)")
+        else:
+            print(f"  ERROR [{flavor}/scgen] scgen_shift.pt WAS COMPUTED ON A "
+                  f"DIFFERENT GENE AXIS")
+            print(f"          sidecar records : {rec}")
+            print(f"          axis in use     : {axis_sha}  ({axis_source})")
+            print( "          The latent shift would be applied to the wrong genes.")
+            print( "          Re-bake with scripts/bake_model_artifacts.py --force.")
             ok = False
 
 if not ok:
@@ -249,7 +328,7 @@ PY
 echo ""
 echo "=== Phase 1: preprocess into atlas HVG namespace ==="
 $ANALYSIS_PY - "$INPUT_H5AD" "$TAG" "$OUTDIR" "$BASE" "$FLAVORS_STR" \
-               "$AXIS_TEMPLATE" "$SET_SUFFIX" <<'PY'
+               "$AXIS_TEMPLATE" "$SET_SUFFIX" "$RESULTS_TEMPLATE" <<'PY'
 import sys, os
 from pathlib import Path
 import numpy as np
@@ -258,8 +337,10 @@ import anndata as ad
 import scanpy as sc
 import scipy.sparse as sp_sparse
 
-INPUT_H5AD, TAG, OUTDIR, BASE, FLAVORS, AXIS_TEMPLATE, SET_SUFFIX = sys.argv[1:8]
+(INPUT_H5AD, TAG, OUTDIR, BASE, FLAVORS, AXIS_TEMPLATE, SET_SUFFIX,
+ RESULTS_TEMPLATE) = sys.argv[1:9]
 FLAVORS = FLAVORS.split()
+RESULTS = f"{BASE}/cellot/cellot_gpu/results"
 ORTHO_CACHE = f"{BASE}/scripts/.biomart_ortholog_cache.csv"
 SYMBOL_CACHE = f"{BASE}/scripts/.bcg_symbol_to_ensmusg.csv"
 
@@ -304,11 +385,19 @@ else:
 
 src_var_idx = {v: i for i, v in enumerate(var_names)}
 
-# For each flavor, project onto that flavor's atlas HVG list
+# For each flavor, project onto that flavor's atlas HVG list. The list comes from
+# the model's own genes.txt sidecar when it exists, which is the whole reason a
+# handover does not need the 35 MB training .h5ad; otherwise from the atlas file.
 for flavor in FLAVORS:
     atlas_path = f"{OUTDIR}/{AXIS_TEMPLATE.replace('{flavor}', flavor)}"
-    atlas = sc.read_h5ad(atlas_path)
-    target_genes = list(atlas.var_names.astype(str))
+    genes_txt = f"{RESULTS}/{RESULTS_TEMPLATE.replace('{flavor}', flavor)}/genes.txt"
+    if os.path.exists(genes_txt):
+        with open(genes_txt) as fh:
+            target_genes = [g for g in fh.read().split("\n") if g != ""]
+        print(f"  {flavor}: gene axis from {genes_txt} ({len(target_genes)} genes)")
+    else:
+        target_genes = list(sc.read_h5ad(atlas_path).var_names.astype(str))
+        print(f"  {flavor}: gene axis from {atlas_path} ({len(target_genes)} genes)")
 
     cols = []
     for ensg in target_genes:
@@ -412,7 +501,7 @@ echo ""
 echo "=== Phase 3: predict via ${#FLAVORS[@]}x2 trained models ==="
 $CELLOT_PY - "$OUTDIR" "$TAG" "$BASE/cellot/cellot_gpu" "$FLAVORS_STR" \
              "$RESULTS_TEMPLATE" "$AXIS_TEMPLATE" "$SET_SUFFIX" <<'PY'
-import sys, os
+import sys, os, hashlib
 sys.path.insert(0, sys.argv[3])
 import torch, numpy as np, anndata as ad
 from cellot.utils import load_config
@@ -424,20 +513,40 @@ OUTDIR, TAG, CELLOT_DIR, FLAVORS, RESULTS_TEMPLATE, AXIS_TEMPLATE, SET_SUFFIX = 
 FLAVORS = FLAVORS.split()
 RESULTS = f"{CELLOT_DIR}/results"
 
+
+def gene_axis_sha256(genes):
+    """Must stay identical to bake_model_artifacts.gene_axis_sha256."""
+    h = hashlib.sha256()
+    for g in genes:
+        h.update(str(g).encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
 for flavor in FLAVORS:
     results_subdir = RESULTS_TEMPLATE.replace("{flavor}", flavor)
     atlas_path = f"{OUTDIR}/{AXIS_TEMPLATE.replace('{flavor}', flavor)}"
+    genes_txt = f"{RESULTS}/{results_subdir}/genes.txt"
     src_path = f"{OUTDIR}/{TAG}_aligned_{flavor}{SET_SUFFIX}_v07.h5ad"
     src = ad.read(src_path)
 
     # Second half of the phase-0 contract: the cells we are about to feed the
-    # model must sit on the axis the model was trained on, gene for gene.
-    atlas_genes = [str(g) for g in ad.read(atlas_path).var_names]
+    # model must sit on the axis the model was trained on, gene for gene. The
+    # axis comes from genes.txt when the model has been baked, else from the
+    # atlas .h5ad -- which is also the only reason that file would be needed.
+    if os.path.exists(genes_txt):
+        with open(genes_txt) as fh:
+            atlas_genes = [g for g in fh.read().split("\n") if g != ""]
+        axis_source = genes_txt
+    else:
+        atlas_genes = [str(g) for g in ad.read(atlas_path).var_names]
+        axis_source = atlas_path
+    axis_sha = gene_axis_sha256(atlas_genes)
     src_genes = [str(g) for g in src.var_names]
     if src_genes != atlas_genes:
         print(f"  ERROR [{flavor}] aligned input is not on the model's gene axis:")
         print(f"          {src_path} ({len(src_genes)} genes)")
-        print(f"          vs {atlas_path} ({len(atlas_genes)} genes)")
+        print(f"          vs {axis_source} ({len(atlas_genes)} genes)")
         print( "          Delete the stale aligned file and re-run. Refusing to predict.")
         sys.exit(1)
 
@@ -457,11 +566,40 @@ for flavor in FLAVORS:
             config.data.ae_emb.path = ae_dir
 
         if model_name == "scgen":
-            a = ad.read(atlas_path)
             model, _ = load_autoencoder_model(config, restore=f"{results_dir}/cache/model.pt",
-                                              device=device, input_dim=a.n_vars)
+                                              device=device, input_dim=len(atlas_genes))
             model.eval()
+            shift_pt = f"{results_dir}/cache/scgen_shift.pt"
+            if not hasattr(model, "code_means") and os.path.exists(shift_pt):
+                # Baked latent shift: skip re-encoding the whole training atlas.
+                # A shift computed on a different gene axis would be applied to
+                # the wrong genes without erroring, so the axis hash is checked
+                # before the shift is allowed anywhere near the model.
+                sidecar = torch.load(shift_pt, map_location=device)
+                rec = sidecar.get("gene_axis_sha256")
+                if rec != axis_sha:
+                    print(f"  ERROR [{flavor}/scgen] {shift_pt} was computed on a "
+                          f"different gene axis:")
+                    print(f"          sidecar records : {rec} "
+                          f"({sidecar.get('n_genes')} genes)")
+                    print(f"          axis in use     : {axis_sha} "
+                          f"({len(atlas_genes)} genes, {axis_source})")
+                    print( "          Refusing to predict. Re-bake with")
+                    print( "          scripts/bake_model_artifacts.py --force.")
+                    sys.exit(1)
+                missing = {"human", "mouse"} - set(sidecar.get("code_means", {}))
+                if missing:
+                    print(f"  ERROR [{flavor}/scgen] {shift_pt} has no code_means for "
+                          f"{sorted(missing)}")
+                    sys.exit(1)
+                model.code_means = {k: v.to(device)
+                                    for k, v in sidecar["code_means"].items()}
+                print(f"    [{flavor}/scgen] latent shift from scgen_shift.pt "
+                      f"(baked {sidecar.get('created_utc')}, "
+                      f"{sidecar.get('n_cells_encoded')} cells) -- training atlas not read")
             if not hasattr(model, "code_means"):
+                print(f"    [{flavor}/scgen] no scgen_shift.pt sidecar -- recomputing "
+                      f"the latent shift from {config.data.path}")
                 loader = load_data(config, return_as="loader")
                 labels = loader.train.dataset.adata.obs[config.data.condition]
                 compute_scgen_shift(model, loader.train.dataset, labels=labels, device=device)

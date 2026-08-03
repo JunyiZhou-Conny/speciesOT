@@ -77,9 +77,12 @@ its own flavors and, critically, its own 1,000-gene axis per flavor:
 and `hvg_pearson_residuals_a_uncapped_v08.h5ad` are both 1,000 genes but share only
 721 of them, so feeding one set's cells to the other set's checkpoint would not raise
 an error — the vector positions would simply mean different genes and the prediction
-would be quietly wrong. The script's phase 0 compares each checkpoint's own
-`config.data.path` gene list against the axis it is about to project onto and aborts
-before writing anything if they disagree.
+would be quietly wrong. The script's phase 0 compares the axis it is about to project
+onto against each checkpoint's own axis and aborts before writing anything if they
+disagree. The axis of record is `results/<tag>/genes.txt` when that file exists
+(see [§2](#what-you-actually-have-to-copy)), because it lives inside the
+checkpoint's own directory and therefore cannot be crossed with another model set's
+axis; otherwise it is the training `.h5ad` named in `config.data.path`.
 
 ---
 
@@ -130,6 +133,61 @@ $REPO/cellot/cellot_gpu/results/hvg_{pearson_residuals,mixhvg}_a_uncapped_v08_ii
 (The `*_v08_ood` models elsewhere in the tree deliberately withhold a cell type — they
 are benchmark models, not deployment models. Do not use them here. The `_iid` variants
 above hold out no cell type, which is what makes them deployment models.)
+
+### What you actually have to copy
+
+**The atlas training datasets are no longer needed for prediction**, provided the model
+set has its two baked sidecars. For `atlas_full_v07` — the default set — copy:
+
+| path | size | what it is |
+|---|---:|---|
+| `results/atlas_full_{seurat_v3,pearson_residuals}/{scgen,impact_cellot}/cache/model.pt` | 17.4 MB | the four trained checkpoints |
+| `results/atlas_full_{seurat_v3,pearson_residuals}/{scgen,impact_cellot}/config.yaml` | 3 KB | how to rebuild each network |
+| `results/atlas_full_{seurat_v3,pearson_residuals}/genes.txt` | 32 KB | **sidecar** — the model's 1,000-gene axis, one id per line |
+| `results/atlas_full_{seurat_v3,pearson_residuals}/scgen/cache/scgen_shift.pt` | 6 KB | **sidecar** — the scGen latent shift (`code_means`) plus provenance |
+| `scripts/.biomart_ortholog_cache.csv`, `scripts/.bcg_symbol_to_ensmusg.csv` | 1.2 MB | mouse→human ortholog and symbol tables |
+| `scripts/predict_new_input.sh`, `h5ad_to_v07.py`, `eval_external_target.py`, `bake_model_artifacts.py` | 74 KB | the scripts |
+
+**Total: 18.7 MB.** Keep the directory layout — every path above is derived from the
+repository root, and `model-scgen` is a symlink to `scgen` in each tag directory.
+
+Without the sidecars the same handover also needs both training `.h5ad` files, which
+is 70.4 MB for `atlas_full_v07` (2 × 35.2 MB, 8,610 cells) and would be 732 MB for the
+`uncapped_v08_iid` set (2 × 366 MB, 89,760 cells).
+
+**This covers prediction (step 2) only.** The scoring step (§3, step 4)
+still needs the flavor's atlas `.h5ad`: `eval_external_target.py` builds its decoded
+floor and ceiling through `load_projectors`, which calls the upstream loader and so
+reads the AE's `config.data.path`. If all you want is predicted human cells, 18.7 MB is
+enough. If you also want the metrics, add the 35.2 MB atlas file for each flavor you
+score.
+
+The two sidecars are written by
+
+```bash
+conda activate CellOT        # or CellOT_v3
+cd /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT
+python scripts/bake_model_artifacts.py --model-set atlas_full_v07
+python scripts/bake_model_artifacts.py --model-set atlas_full_v07 --verify   # optional
+```
+
+It never touches `cache/model.pt`; it only adds files next to it. It needs the training
+dataset **once**, at bake time. `--verify` recomputes both sidecars and reports
+`max|diff|` against what is on disk.
+
+| model set | sidecars present? |
+|---|---|
+| `atlas_full_v07` | **yes**, baked 2026-08-03 for both flavors |
+| `uncapped_v08_iid` | no — bake it once its four checkpoints finish training |
+
+`predict_new_input.sh` falls back to the original behaviour (read the atlas for the gene
+axis, re-encode the training cells to recover the shift) whenever a sidecar is missing,
+so an unbaked model set still works exactly as before — it just needs its dataset.
+
+The sidecar records the sha256 of the gene axis it was computed against, and both phase 0
+and phase 3 refuse to run if that does not match the axis actually in use. This matters:
+a latent shift silently applied on the wrong gene axis is the same class of error phase 0
+already existed to prevent.
 
 ### Input file requirements (mouse)
 
@@ -187,6 +245,12 @@ projects onto each atlas HVG list (genes with no ortholog are filled with zeros 
 printed **coverage** line tells you how many of the 1,000 genes were actually found),
 log1p(CP10k)-normalizes, then runs all four trained models.
 
+When the sidecars are present the run never opens an atlas `.h5ad`: phase 1 prints
+`gene axis from .../genes.txt` and phase 3 prints `latent shift from scgen_shift.pt`.
+If instead you see `gene axis from .../hvg_*.h5ad` and `recomputing the latent shift`,
+the sidecars are missing for that model set and the training dataset is being read —
+correct, but not the light-handover path.
+
 It writes, into
 `$REPO/cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/`:
 
@@ -213,12 +277,14 @@ should be treated as a data-preparation problem, not a modelling result.
 ```bash
 conda activate analysis
 python - <<'PY'
-import anndata as ad, numpy as np, pandas as pd, scanpy as sc, scipy.sparse as sp
+import anndata as ad, numpy as np, os, pandas as pd, scanpy as sc, scipy.sparse as sp
 
-ATLAS = ("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/cellot/cellot_gpu/datasets/"
-         "speciesot-human-mouse-hvg/hvg_{flavor}_atlas_full_v07.h5ad")
+REPO  = "/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT"
+GENES = REPO + "/cellot/cellot_gpu/results/atlas_full_{flavor}/genes.txt"   # sidecar
+ATLAS = (REPO + "/cellot/cellot_gpu/datasets/"
+         "speciesot-human-mouse-hvg/hvg_{flavor}_atlas_full_v07.h5ad")      # fallback
 SRC   = "/path/to/bcg_human_unvax.h5ad"     # raw counts, ENSG in .var_names
-OUT   = ("/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/cellot/cellot_gpu/datasets/"
+OUT   = (REPO + "/cellot/cellot_gpu/datasets/"
          "speciesot-human-mouse-hvg/bcg_unvax_human_target_{flavor}.h5ad")
 
 src = ad.read_h5ad(SRC)
@@ -231,7 +297,11 @@ X = src.X.toarray() if sp.issparse(src.X) else np.asarray(src.X)
 pos = {str(g): i for i, g in enumerate(src.var_names)}
 
 for flavor in ("seurat_v3", "pearson_residuals"):
-    genes = [str(g) for g in ad.read_h5ad(ATLAS.format(flavor=flavor)).var_names]
+    gpath = GENES.format(flavor=flavor)
+    if os.path.exists(gpath):          # same axis the prediction was made on
+        genes = [g for g in open(gpath).read().split("\n") if g]
+    else:
+        genes = [str(g) for g in ad.read_h5ad(ATLAS.format(flavor=flavor)).var_names]
     Xn = np.zeros((src.n_obs, len(genes)), dtype="float32")
     hit = 0
     for j, g in enumerate(genes):
@@ -472,6 +542,26 @@ lab, a different protocol, and a different tissue context.
   synthetic input, for all four model × flavor combinations, with the same coverage and
   the same output filenames. Verified under both `CellOT` and `CellOT_v3`, which also
   agreed bit-identically with each other.
+- **The baked sidecars are verified to change nothing numerically** (2026-08-03). On 400
+  synthetic mouse cells built from real ortholog-cache `ENSMUSG` ids (100% coverage on
+  both axes), `--model-set atlas_full_v07` was run three ways — with the sidecars, with
+  them hidden behind a symlinked tree so the old code path ran, and in a tree containing
+  **no atlas `.h5ad` at all** — and all four predictions came out byte-identical in every
+  pairing (`max|diff| = 0.0`, equal buffers), as did the phase-1 aligned inputs. The
+  guards were exercised too: a `genes.txt` swapped to the other flavor's axis, a
+  `genes.txt` disagreeing with a present atlas file, and a `scgen_shift.pt` from the
+  wrong flavor each abort with nothing written. Wall clock is unchanged — the step
+  removed (re-encoding 6,888 training cells) costs 0.3–3.4 s per flavor against ~23–34 s
+  total run-to-run scatter on a shared login node, so the win here is handover size, not
+  speed. On a 89,760-cell set such as `uncapped_v08_iid` the removed step is roughly ten
+  times larger.
+- **`uncapped_v08_iid` has no sidecars yet** — its checkpoints were still training. Once
+  they finish, `python scripts/bake_model_artifacts.py --model-set uncapped_v08_iid`
+  bakes them; nothing else changes.
+- **`eval_external_target.py` has not been made dataset-free.** Only prediction has. Its
+  `load_projectors` call still reads the AE's `config.data.path`, so scoring needs the
+  atlas file. Teaching `patch_scgen_shift` to read `scgen_shift.pt` would close that
+  gap; it has not been attempted.
 - **`--model-set uncapped_v08_iid` has NOT been run end to end.** Its `scgen` halves were
   still training and its `impact_cellot` halves had not started when this was written, so
   the script correctly refuses the set on the missing-checkpoint check. What *is* verified
@@ -499,9 +589,9 @@ Only one thing in this runbook still needs editing:
 
 | file | what to change |
 |---|---|
-| the step-3 snippet above | `ATLAS`, `SRC`, `OUT` |
+| the step-3 snippet above | `REPO` and `SRC` (`GENES`, `ATLAS`, `OUT` derive from `REPO`) |
 
-`scripts/predict_new_input.sh` needs **no** editing. It derives the repo root from its
+`scripts/predict_new_input.sh` and `scripts/bake_model_artifacts.py` need **no** editing. It derives the repo root from its
 own location and derives the ortholog/symbol cache paths from that, so a clone anywhere
 works. Environment variables cover the rest:
 
