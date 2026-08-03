@@ -5,8 +5,8 @@ CLI, the spec system, or any of the training machinery. Everything below is CPU-
 and runs in minutes on a Cannon login node.
 
 Repository root used throughout: `/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT`
-(call it `$REPO`). **Every path in the scripts is hardcoded to the student's account —
-see [§7](#7-paths-you-must-change) before you run anything.**
+(call it `$REPO`). The two scripts you run find their own paths; only the inline
+snippet in step 3 still hardcodes anything — see [§7](#7-paths-you-must-change).
 
 ---
 
@@ -60,9 +60,26 @@ autoencoder (AE) latent space, and predictions come out of the AE decoder:
 | `scgen` | baseline: a constant mouse→human shift applied to the latent code |
 | `impact_cellot` | the main model: a neural optimal-transport map on the latent code |
 
-Each exists in two gene-selection flavors (`seurat_v3`, `pearson_residuals`), so a run
-produces **four** predictions. `impact_cellot` + `pearson_residuals` is the usual
-headline pairing.
+Each exists in two gene-selection flavors, so a run produces **four** predictions.
+`impact_cellot` + `pearson_residuals` is the usual headline pairing.
+
+### The model sets
+
+`predict_new_input.sh --model-set NAME` chooses which trained set to use. Each set has
+its own flavors and, critically, its own 1,000-gene axis per flavor:
+
+| `--model-set` | flavors | trained on |
+|---|---|---|
+| `atlas_full_v07` (default) | `seurat_v3`, `pearson_residuals` | the May-8 atlas cut, before the assay filter |
+| `uncapped_v08_iid` | `pearson_residuals`, `mixhvg` | the v08 assay-filtered atlas cut |
+
+**The gene axes are not interchangeable.** `hvg_pearson_residuals_atlas_full_v07.h5ad`
+and `hvg_pearson_residuals_a_uncapped_v08.h5ad` are both 1,000 genes but share only
+721 of them, so feeding one set's cells to the other set's checkpoint would not raise
+an error — the vector positions would simply mean different genes and the prediction
+would be quietly wrong. The script's phase 0 compares each checkpoint's own
+`config.data.path` gene list against the axis it is about to project onto and aborts
+before writing anything if they disagree.
 
 ---
 
@@ -75,9 +92,26 @@ headline pairing.
 | `analysis` | gene mapping / preprocessing (step 2 below) | needs `scanpy >= 1.12` |
 | `CellOT` | everything that touches a trained model (steps 2–4) | has the `torch` build the checkpoints were saved with |
 
-`scripts/predict_new_input.sh` switches between them for you by calling each
-interpreter by absolute path. The evaluation script in step 4 you run yourself in
-`CellOT`.
+`scripts/predict_new_input.sh` switches between them for you: it probes your own conda
+install (`$HOME/miniforge3`, `$HOME/.conda`, `$HOME/miniconda3`, `$HOME/anaconda3`,
+`$HOME/mambaforge`) for each env and falls back to the original author's absolute paths.
+Override with `SPECIESOT_ANALYSIS_PY` / `SPECIESOT_CELLOT_PY` if it guesses wrong. The
+evaluation script in step 4 you run yourself in `CellOT`.
+
+**A third env, `CellOT_v3`, is available and is the easier one if you are starting
+fresh** (python 3.11, anndata 0.10.9, torch 2.3.1). Unlike `CellOT` (anndata 0.7.6) it
+reads **both** old and modern `.h5ad` files, which removes the whole
+anndata-version dance in step 3. Select it with:
+
+```bash
+SPECIESOT_CELLOT_ENV=CellOT_v3 bash scripts/predict_new_input.sh ...
+```
+
+It was validated numerically against `CellOT`: predictions agree to 8.3e-07 (scGen) and
+4.8e-06 (IMPACT), the scGen shift is bit-identical, and on the synthetic smoke test all
+four predictions came out bit-identical between the two envs. `CellOT` remains the
+default, and the script's phase-2 round-trip still runs under either env because the
+legacy env needs it.
 
 **Trained models.** All four deployment checkpoints are already on disk and are the
 ones to use for external prediction, because they were trained on *all* atlas cells
@@ -87,8 +121,15 @@ with no holdout:
 $REPO/cellot/cellot_gpu/results/atlas_full_{seurat_v3,pearson_residuals}/{scgen,impact_cellot}/cache/model.pt
 ```
 
+The `uncapped_v08_iid` set is the v08 successor, at
+
+```
+$REPO/cellot/cellot_gpu/results/hvg_{pearson_residuals,mixhvg}_a_uncapped_v08_iid/{scgen,impact_cellot}/cache/model.pt
+```
+
 (The `*_v08_ood` models elsewhere in the tree deliberately withhold a cell type — they
-are benchmark models, not deployment models. Do not use them here.)
+are benchmark models, not deployment models. Do not use them here. The `_iid` variants
+above hold out no cell type, which is what makes them deployment models.)
 
 ### Input file requirements (mouse)
 
@@ -136,7 +177,10 @@ bash scripts/predict_new_input.sh /path/to/bcg_mouse_unvax.h5ad bcg_unvax
 ```
 
 The second argument is a tag used to name the outputs. This script activates both
-environments itself; you do not need to `conda activate` anything.
+environments itself; you do not need to `conda activate` anything. Add
+`--model-set uncapped_v08_iid` to use the v08 models instead of the default
+`atlas_full_v07` pair (§1); non-default sets suffix their output filenames with the set
+name so the two sets' files cannot be confused for each other.
 
 What it does: maps mouse genes → human orthologs via the cached BioMart table,
 projects onto each atlas HVG list (genes with no ortholog are filled with zeros — the
@@ -423,6 +467,19 @@ lab, a different protocol, and a different tissue context.
   synthetic input as meaningless. Two defects found in that run — the anndata-version
   conversion in step 3, and the silent zero-fill on low coverage — are now documented
   above.
+- **`--model-set atlas_full_v07` (the default) is verified** (2026-08-03) to produce
+  bit-identical predictions to the pre-`--model-set` version of the script, on the same
+  synthetic input, for all four model × flavor combinations, with the same coverage and
+  the same output filenames. Verified under both `CellOT` and `CellOT_v3`, which also
+  agreed bit-identically with each other.
+- **`--model-set uncapped_v08_iid` has NOT been run end to end.** Its `scgen` halves were
+  still training and its `impact_cellot` halves had not started when this was written, so
+  the script correctly refuses the set on the missing-checkpoint check. What *is* verified
+  for it: the phase-0 axis binding for all four (flavor, model) pairs against the real
+  `config.yaml` files, and the phase-1 projection onto both v08 axes (coverage 200/1000
+  and 201/1000 on the synthetic input). Phase 3 — actually loading those checkpoints and
+  predicting — is untested. Re-run `bash scripts/predict_new_input.sh --model-set
+  uncapped_v08_iid <input.h5ad> <tag>` once training finishes.
 - The step-3 human-alignment snippet has **not** been executed against real human BCG
   data. The raw human BCG counts (GEO `GSE248728`, 14 10x capture matrices) sit under
   `/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/tb/data/human_bcg/`, but no
@@ -438,18 +495,39 @@ lab, a different protocol, and a different tissue context.
 
 ## 7. Paths you must change
 
-These are literal absolute paths, not environment variables. Editing them is required
-if you run outside the student's account.
+Only one thing in this runbook still needs editing:
 
 | file | what to change |
 |---|---|
-| `scripts/predict_new_input.sh`, lines 36–38 | `BASE` (repo root), `ANALYSIS_PY`, `CELLOT_PY` (absolute interpreter paths for the two conda envs) |
-| `scripts/predict_new_input.sh`, lines ~72–73 | `ORTHO_CACHE` and `SYMBOL_CACHE` inside the phase-1 heredoc — both hardcode the repo root again |
 | the step-3 snippet above | `ATLAS`, `SRC`, `OUT` |
 
-`scripts/eval_external_target.py` needs **no** editing: it locates the repository from
-its own file location and takes every other path as a command-line argument. If you
+`scripts/predict_new_input.sh` needs **no** editing. It derives the repo root from its
+own location and derives the ortholog/symbol cache paths from that, so a clone anywhere
+works. Environment variables cover the rest:
+
+| variable | effect |
+|---|---|
+| `SPECIESOT_ROOT` | repo root, for the case where the code and the results tree live apart |
+| `SPECIESOT_ANALYSIS_PY` | interpreter for the `analysis` env |
+| `SPECIESOT_CELLOT_PY` | interpreter for the model env |
+| `SPECIESOT_CELLOT_ENV` | conda env *name* for the model env; default `CellOT`, set to `CellOT_v3` for the modern stack |
+
+`scripts/eval_external_target.py` needs no editing either: it locates the repository
+from its own file location and takes every other path as a command-line argument. If you
 copy it elsewhere, pass `--cellot-dir <repo>/cellot/cellot_gpu`.
+
+The script prints the paths it resolved in its header, so check that block before
+trusting a run:
+
+```
+=== predict_new_input.sh ===
+  input:      /path/to/mouse.h5ad
+  tag:        my_tag
+  model set:  atlas_full_v07  (flavors: seurat_v3 pearson_residuals)
+  base:       /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT
+  analysis:   /n/home01/.../envs/analysis/bin/python
+  model env:  /n/home01/.../envs/CellOT/bin/python
+```
 
 Find your own interpreter paths with:
 
