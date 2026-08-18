@@ -5,8 +5,11 @@ CLI, the spec system, or any of the training machinery. Everything below is CPU-
 and runs in minutes on a Cannon login node.
 
 Repository root used throughout: `/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT`
-(call it `$REPO`). The two scripts you run find their own paths; only the inline
+(call it `$REPO`). The scripts you run find their own paths; only the inline
 snippet in step 3 still hardcodes anything — see [§7](#7-paths-you-must-change).
+The inspectable BCG notebook is
+`speciesOT/baseline/analysis/16.4_bcg_v08_predict_verify.ipynb` (same chain,
+plus the paper-style boards).
 
 ---
 
@@ -147,7 +150,7 @@ set has its two baked sidecars. For `atlas_full_v07` — the default set — cop
 | `results/atlas_full_{seurat_v3,pearson_residuals}/genes.txt` | 32 KB | **sidecar** — the model's 1,000-gene axis, one id per line |
 | `results/atlas_full_{seurat_v3,pearson_residuals}/scgen/cache/scgen_shift.pt` | 6 KB | **sidecar** — the scGen latent shift (`code_means`) plus provenance |
 | `scripts/.biomart_ortholog_cache.csv`, `scripts/.bcg_symbol_to_ensmusg.csv` | 1.2 MB | mouse→human ortholog and symbol tables |
-| `scripts/predict_new_input.sh`, `h5ad_to_v07.py`, `eval_external_target.py`, `bake_model_artifacts.py` | 74 KB | the scripts |
+| `scripts/predict_new_input.sh`, `h5ad_to_v07.py`, `eval_external_target.py`, `score_bcg_and_plot.sh`, `plot_bcg_paper_figures.py`, `bake_model_artifacts.py` | 90 KB | the scripts |
 
 **Total: 18.7 MB.** Keep the directory layout — every path above is derived from the
 repository root, and `model-scgen` is a symlink to `scgen` in each tag directory.
@@ -389,9 +392,45 @@ terminal.
 Repeat for the other three prediction files to compare the two model families and the
 two gene flavors.
 
-### Step 5 — read the output
+Or, once the human target exists, score **both** families and write the paper-style
+boards in one shot (`CellOT` for eval, `analysis` for figures):
 
-See §4. Nothing else needs to be run.
+```bash
+bash scripts/score_bcg_and_plot.sh \
+  --model-set uncapped_v08_iid \
+  --flavor pearson_residuals \
+  --tag bcg_ctrl_a2 \
+  --target $D/bcg_human_unvax_target_pearson_residuals_uncapped_v08_iid_anndata07.h5ad
+```
+
+`--tag` is the mouse-predict tag from step 2. `--flavor` / `--model-set` pick which
+axis and which checkpoints. A later BCG correction is a new `--tag` (and new
+`--target` if the human file changed). A later atlas model is a new
+`--model-set` / `--flavor`. Do not recode the figures.
+
+### Step 5 — paper-style BCG figures (`analysis` env)
+
+`scripts/plot_bcg_paper_figures.py` is the figure half of the same pipeline. The
+wrapper above calls it; 16.4 section 8 calls it; you can also run it alone after
+the CSVs exist (`--skip-eval` on the wrapper).
+
+Writes `speciesOT/baseline/analysis/paper_style_bcg_outputs/<tag>_<flavor>_<model_set>/`:
+
+| file | what it answers | BCG-specific rule |
+|---|---|---|
+| `scatter_mean_r2` | did the mean land? | pred vs real human; Wilcoxon is **BCG human vs BCG mouse**; red points are HSC genes on this axis |
+| `mmd_bars` | did the cloud land? | decoded-frame floor / ceiling / model from the eval CSV — matches the scorecard |
+| `kde_markers` | per-gene shape | labels are mouse BCG / human BCG / IMPACT / scGen. scANVI KDEs are smoother than raw UMIs |
+| `umap_joint` | cloud overlap | grey = observed human; Identity = mouse (no transport) |
+| `dotplot_markers` | mean panel | color = mean. Size is unused: after scANVI almost no exact zeros, so % expressed saturates |
+
+These are not optional decoration. Rank BCG variants on `model_over_floor` and
+`r2_model_dec` **and** look at these boards. Do not rank BCG on
+`frac_gap_closed_decoded`.
+
+### Step 6 — read the output
+
+See §4 for the numbers. Open the PNGs from step 5 next to them.
 
 ---
 

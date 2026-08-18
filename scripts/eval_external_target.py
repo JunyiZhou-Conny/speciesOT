@@ -47,6 +47,11 @@ USAGE (CellOT env)
 
 Writes `<outdir>/external_target_metrics.{csv,json}` (default outdir:
 `results/external_eval/<tag>/`). CPU only; a few minutes for ~10^3 cells x 10^3 genes.
+
+For BCG, the paper-style boards (mean-R², decoded MMD bars, HSC KDEs, UMAP,
+mean-only marker panel) are a separate **analysis-env** step:
+`scripts/plot_bcg_paper_figures.py`, or both evals + figures via
+`scripts/score_bcg_and_plot.sh`. See 16.4 and `docs/mentor_runbook.md` step 5.
 """
 
 from __future__ import annotations
