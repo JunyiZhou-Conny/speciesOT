@@ -71,7 +71,8 @@ its own flavors and, critically, its own 1,000-gene axis per flavor:
 | `--model-set` | flavors | trained on |
 |---|---|---|
 | `atlas_full_v07` (default) | `seurat_v3`, `pearson_residuals` | the May-8 atlas cut, before the assay filter |
-| `uncapped_v08_iid` | `pearson_residuals`, `mixhvg` | the v08 assay-filtered atlas cut |
+| `uncapped_v08` | `pearson_residuals`, `mixhvg` | the v08 assay-filtered atlas, ordinary `train_test` (no type holdout). Use when `results/hvg_{flavor}_uncapped_v08/*/cache/model.pt` exist |
+| `uncapped_v08_iid` | `pearson_residuals`, `mixhvg` | the v08 assay-filtered atlas cut (toggle_ood-iid twins; interim until `uncapped_v08` finishes) |
 
 **The gene axes are not interchangeable.** `hvg_pearson_residuals_atlas_full_v07.h5ad`
 and `hvg_pearson_residuals_a_uncapped_v08.h5ad` are both 1,000 genes but share only
@@ -194,14 +195,15 @@ already existed to prevent.
 Carried over from the header of `scripts/predict_new_input.sh`:
 
 - An **AnnData `.h5ad`** containing mouse cells.
-- **Raw integer counts.** Preferred location is `.layers['counts']`; if that layer is
-  absent, `.X` is used and **must itself be raw integer counts**. The script asserts
-  integrality on the first 50 cells and aborts otherwise. Do not hand it
-  log-normalized or scaled data — normalization happens inside the script.
-- **Gene names in `.var_names`**, either mouse Ensembl IDs (`ENSMUSG…`) or gene
-  symbols. Symbols are resolved through the cached table
-  `scripts/.bcg_symbol_to_ensmusg.csv`; if a symbol is not in that cache it is silently
-  dropped, so prefer `ENSMUSG…` IDs when you have them.
+- **Default (raw mouse):** integer counts in `.layers['counts']` (else `.X`), and
+  mouse gene names (`ENSMUSG…` or symbols). The script asserts integrality and
+  then does `normalize_total` + `log1p` itself. Do not log-normalize first.
+- **scANVI posed files (`--posed-ensg`):** `.var_names` are already human `ENSG…`,
+  and `.layers['counts']` is atlas-posed **count-scale** expression (continuous;
+  not integers). Add `--posed-ensg`. The script skips the integer check and the
+  mouse→human hop, then still does `normalize_total` + `log1p`. Do **not**
+  log1p these files yourself. Do not pass `counts_original` as the main matrix
+  if you mean the posed decode.
 - Anything else in `.obs` is optional; the script keeps `condition`, `species`,
   `cell_type`, `study`, `_scvi_batch` if present and discards the rest.
 
@@ -255,8 +257,9 @@ It writes, into
 `$REPO/cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/`:
 
 ```
-bcg_unvax_aligned_{seurat_v3,pearson_residuals}_v07.h5ad          # the mouse input, atlas-aligned
-bcg_unvax_predicted_human_via_{scgen,impact_cellot}_{seurat_v3,pearson_residuals}.h5ad
+bcg_unvax_aligned_{flavor}.h5ad              # mouse input on the model gene axis
+bcg_unvax_aligned_{flavor}_anndata07.h5ad    # same matrix, anndata 0.7 format (not model v07)
+bcg_unvax_predicted_human_via_{scgen,impact_cellot}_{flavor}.h5ad
 ```
 
 **Check the coverage line before going further.** If coverage is far below ~80% of
@@ -335,11 +338,12 @@ D=cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg
 for flavor in seurat_v3 pearson_residuals; do
   python scripts/h5ad_to_v07.py \
     $D/bcg_unvax_human_target_${flavor}.h5ad \
-    $D/bcg_unvax_human_target_${flavor}_v07.h5ad
+    $D/bcg_unvax_human_target_${flavor}_anndata07.h5ad
 done
 ```
 
-Pass the `_v07.h5ad` files to `--target` in step 4.
+Pass the `_anndata07.h5ad` files to `--target` in step 4. That suffix is the
+anndata 0.7 file format, not the `atlas_full_v07` model set.
 
 `scripts/h5ad_to_v07.py` works on **any** `.h5ad` regardless of which anndata
 wrote it, so use it whenever a file needs to cross between the two environments.
@@ -360,7 +364,7 @@ D=cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg
 python scripts/eval_external_target.py \
   --pred   $D/bcg_unvax_predicted_human_via_impact_cellot_pearson_residuals.h5ad \
   --target $D/bcg_unvax_human_target_pearson_residuals.h5ad \
-  --source $D/bcg_unvax_aligned_pearson_residuals_v07.h5ad \
+  --source $D/bcg_unvax_aligned_pearson_residuals_anndata07.h5ad \
   --aedir  cellot/cellot_gpu/results/atlas_full_pearson_residuals/scgen \
   --tag    bcg_unvax_impact_pearson
 ```

@@ -28,7 +28,7 @@ self-describing -- then rebuild the object and write it with anndata 0.7.
 RUN THIS IN THE CellOT ENV (it must be the one doing the writing):
 
     conda activate CellOT
-    python scripts/h5ad_to_v07.py input.h5ad output_v07.h5ad
+    python scripts/h5ad_to_v07.py input.h5ad output_anndata07.h5ad
 
 This logic was previously inlined in phase 2 of scripts/predict_new_input.sh
 for the mouse path only. It is factored out here so the human ground-truth path

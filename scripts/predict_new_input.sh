@@ -4,15 +4,21 @@
 # and write predicted human cells.
 #
 # Usage:
-#   bash scripts/predict_new_input.sh [--model-set NAME] <path_to_mouse.h5ad> [output_tag]
+#   bash scripts/predict_new_input.sh [--model-set NAME] [--posed-ensg] \
+#       <path_to_mouse.h5ad> [output_tag]
 #
 # Example:
 #   bash scripts/predict_new_input.sh ~/my_new_mouse.h5ad my_experiment_2026
-#   bash scripts/predict_new_input.sh --model-set uncapped_v08_iid ~/my_new_mouse.h5ad exp2
+#   bash scripts/predict_new_input.sh --model-set uncapped_v08 ~/my_new_mouse.h5ad exp2
+#   bash scripts/predict_new_input.sh --model-set uncapped_v08_iid --posed-ensg \
+#       bcg_control_scanvi.h5ad bcg_ctrl_a2
 #
 # Model sets (--model-set, default atlas_full_v07):
 #   atlas_full_v07     the May-8 deployment models, flavors seurat_v3 + pearson_residuals
-#   uncapped_v08_iid   the v08 assay-filtered deployment models, flavors pearson_residuals + mixhvg
+#   uncapped_v08       the v08 train_test deployment models (all cell types in the
+#                      train pool; 5% monitor split). flavors pearson_residuals + mixhvg
+#   uncapped_v08_iid   the v08 toggle_ood-iid twins (interim until uncapped_v08
+#                      checkpoints exist). flavors pearson_residuals + mixhvg
 # Each set has its OWN gene axis per flavor, and each model may ONLY be fed cells
 # projected onto its own axis: hvg_pearson_residuals_atlas_full_v07.h5ad and
 # hvg_pearson_residuals_a_uncapped_v08.h5ad share only 721 of their 1000 genes, so
@@ -30,12 +36,19 @@
 # absent the original behaviour (read the atlas, recompute the shift) is used, so
 # model sets that have not been baked still work unchanged.
 #
-# Requirements for input file:
+# Requirements for input file (default, raw mouse):
 #   - AnnData h5ad with mouse cells.
 #   - Gene names in .var_names: either mouse Ensembl (ENSMUSG*) or symbols.
 #     If symbols, they will be mapped via the cached BioMart table.
 #   - Raw integer counts in .layers['counts'] (preferred). If not present,
 #     we use .X (which must be raw integer counts).
+#
+# --posed-ensg  (scANVI / attempt 2):
+#   Use this when the file is already human ENSG and .layers['counts'] is
+#   atlas-posed count-scale expression (continuous; freq * library size).
+#   Skips the integer assert and the mouse→human ortholog hop. Still runs
+#   normalize_total + log1p, so do NOT log1p the file yourself first.
+#   Still prefers .layers['counts'] over .X; does not use counts_original.
 #
 # Environment (all optional; defaults reproduce the historical behaviour):
 #   SPECIESOT_ROOT         repo root, if the code and the results tree live apart
@@ -60,6 +73,7 @@
 set -euo pipefail
 
 MODEL_SET="atlas_full_v07"
+INPUT_MODE="raw_mouse"
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -73,6 +87,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --model-set=*)
             MODEL_SET="${1#*=}"
+            shift
+            ;;
+        --posed-ensg)
+            INPUT_MODE="posed_ensg"
             shift
             ;;
         -h|--help)
@@ -89,7 +107,7 @@ done
 set -- ${POSITIONAL[@]+"${POSITIONAL[@]}"}
 
 if [[ $# -lt 1 ]]; then
-    echo "Usage: bash scripts/predict_new_input.sh [--model-set NAME] <path_to_mouse.h5ad> [output_tag]"
+    echo "Usage: bash scripts/predict_new_input.sh [--model-set NAME] [--posed-ensg] <path_to_mouse.h5ad> [output_tag]"
     exit 1
 fi
 
@@ -115,6 +133,12 @@ case "$MODEL_SET" in
         # filenames must stay exactly what they have always been.
         SET_SUFFIX=""
         ;;
+    uncapped_v08)
+        FLAVORS=(pearson_residuals mixhvg)
+        RESULTS_TEMPLATE="hvg_{flavor}_uncapped_v08"
+        AXIS_TEMPLATE="hvg_{flavor}_a_uncapped_v08.h5ad"
+        SET_SUFFIX="_uncapped_v08"
+        ;;
     uncapped_v08_iid)
         FLAVORS=(pearson_residuals mixhvg)
         RESULTS_TEMPLATE="hvg_{flavor}_a_uncapped_v08_iid"
@@ -125,7 +149,7 @@ case "$MODEL_SET" in
         ;;
     *)
         echo "ERROR: unknown --model-set '$MODEL_SET'"
-        echo "  valid: atlas_full_v07, uncapped_v08_iid"
+        echo "  valid: atlas_full_v07, uncapped_v08, uncapped_v08_iid"
         exit 1
         ;;
 esac
@@ -328,7 +352,7 @@ PY
 echo ""
 echo "=== Phase 1: preprocess into atlas HVG namespace ==="
 $ANALYSIS_PY - "$INPUT_H5AD" "$TAG" "$OUTDIR" "$BASE" "$FLAVORS_STR" \
-               "$AXIS_TEMPLATE" "$SET_SUFFIX" "$RESULTS_TEMPLATE" <<'PY'
+               "$AXIS_TEMPLATE" "$SET_SUFFIX" "$RESULTS_TEMPLATE" "$INPUT_MODE" <<'PY'
 import sys, os
 from pathlib import Path
 import numpy as np
@@ -338,52 +362,81 @@ import scanpy as sc
 import scipy.sparse as sp_sparse
 
 (INPUT_H5AD, TAG, OUTDIR, BASE, FLAVORS, AXIS_TEMPLATE, SET_SUFFIX,
- RESULTS_TEMPLATE) = sys.argv[1:9]
+ RESULTS_TEMPLATE, INPUT_MODE) = sys.argv[1:10]
 FLAVORS = FLAVORS.split()
 RESULTS = f"{BASE}/cellot/cellot_gpu/results"
 ORTHO_CACHE = f"{BASE}/scripts/.biomart_ortholog_cache.csv"
 SYMBOL_CACHE = f"{BASE}/scripts/.bcg_symbol_to_ensmusg.csv"
 
+
+def _strip_ens(x):
+    x = str(x)
+    return x.split(".")[0] if x.startswith("ENS") and "." in x else x
+
+
 src = sc.read_h5ad(INPUT_H5AD)
 print(f"  loaded: {src.shape}, var sample: {list(src.var_names[:3])}")
+print(f"  input mode: {INPUT_MODE}")
 
-# Get raw counts into .X
+# Get expression into .X. Prefer layers['counts'] in both modes (posed
+# scANVI writes the atlas-batch matrix there; counts_original is ignored).
 if "counts" in src.layers:
     src.X = src.layers["counts"].astype("float32")
+    print("  using layers['counts']")
 src.obs_names_make_unique()
 src.obs["condition"] = "mouse"
 src.obs["species"] = "mouse"
 
-# Ensure integer counts
 xs = src.X[:50].toarray().ravel() if sp_sparse.issparse(src.X) else src.X[:50].ravel()
-assert np.allclose(xs, np.round(xs)), "input .X (or .layers['counts']) must be raw integer counts"
+xs = np.asarray(xs)
 
-# Map var_names to ENSG (handle both ENSMUSG and symbols)
-var_names = list(src.var_names.astype(str))
-is_ensembl = all(v.startswith("ENSMUSG") for v in var_names[:10])
-print(f"  detected var_names: {'ENSMUSG' if is_ensembl else 'symbols'}")
-
-# Load ortholog cache (mouse Ensembl -> human Ensembl)
-ortho = pd.read_csv(ORTHO_CACHE)
-ensmusg2ensg = dict(zip(ortho["mouse_ensembl_id"].astype(str), ortho["human_ensembl_id"].astype(str)))
-
-if is_ensembl:
-    var2ensg = {v: ensmusg2ensg.get(v) for v in var_names}
-else:
-    # symbols -> ENSMUSG via cache (or BioMart if missing). For now require cache.
-    if not os.path.exists(SYMBOL_CACHE):
-        print(f"ERROR: symbol cache missing at {SYMBOL_CACHE}.")
-        print("  Run notebook 16 once on any symbol-keyed mouse file to populate.")
+if INPUT_MODE == "posed_ensg":
+    var_names = [_strip_ens(v) for v in src.var_names.astype(str)]
+    n_ensg = sum(v.startswith("ENSG") for v in var_names[:20])
+    if n_ensg < 10:
+        print("ERROR: --posed-ensg expects human ENSG ids in .var_names.")
+        print(f"  first names: {var_names[:5]}")
         sys.exit(1)
-    sym_df = pd.read_csv(SYMBOL_CACHE)
-    sym2ensmusg = dict(zip(sym_df["symbol"], sym_df["ensmusg"]))
-    var2ensg = {}
-    for v in var_names:
-        ensmusg = sym2ensmusg.get(v)
-        if ensmusg is not None:
-            var2ensg[v] = ensmusg2ensg.get(ensmusg)
+    print(f"  detected var_names: human ENSG (no ortholog hop)")
+    print("  skipping integer-count check (scANVI posed counts are continuous)")
+    src_var_idx = {}
+    for i, v in enumerate(var_names):
+        if v not in src_var_idx:
+            src_var_idx[v] = i
+    var2ensg = {v: v for v in src_var_idx}
+else:
+    if not np.allclose(xs, np.round(xs)):
+        print("ERROR: input .X (or .layers['counts']) must be raw integer counts.")
+        print("  This file looks continuous (scANVI posed counts usually are).")
+        print("  If .var_names are already human ENSG, re-run with --posed-ensg")
+        print("  and do NOT log1p the file first — the script still does that.")
+        sys.exit(1)
+    var_names = list(src.var_names.astype(str))
+    is_ensembl = all(v.startswith("ENSMUSG") for v in var_names[:10])
+    print(f"  detected var_names: {'ENSMUSG' if is_ensembl else 'symbols'}")
 
-src_var_idx = {v: i for i, v in enumerate(var_names)}
+    ortho = pd.read_csv(ORTHO_CACHE)
+    ensmusg2ensg = dict(zip(
+        [_strip_ens(x) for x in ortho["mouse_ensembl_id"].astype(str)],
+        [_strip_ens(x) for x in ortho["human_ensembl_id"].astype(str)],
+    ))
+
+    if is_ensembl:
+        var2ensg = {v: ensmusg2ensg.get(_strip_ens(v)) for v in var_names}
+    else:
+        if not os.path.exists(SYMBOL_CACHE):
+            print(f"ERROR: symbol cache missing at {SYMBOL_CACHE}.")
+            print("  Run notebook 16 once on any symbol-keyed mouse file to populate.")
+            sys.exit(1)
+        sym_df = pd.read_csv(SYMBOL_CACHE)
+        sym2ensmusg = dict(zip(sym_df["symbol"], sym_df["ensmusg"]))
+        var2ensg = {}
+        for v in var_names:
+            ensmusg = sym2ensmusg.get(v)
+            if ensmusg is not None:
+                var2ensg[v] = ensmusg2ensg.get(_strip_ens(ensmusg))
+
+    src_var_idx = {v: i for i, v in enumerate(var_names)}
 
 # For each flavor, project onto that flavor's atlas HVG list. The list comes from
 # the model's own genes.txt sidecar when it exists, which is the whole reason a
@@ -401,9 +454,10 @@ for flavor in FLAVORS:
 
     cols = []
     for ensg in target_genes:
+        key = _strip_ens(ensg)
         match = None
         for v, e in var2ensg.items():
-            if e == ensg:
+            if e is not None and _strip_ens(e) == key:
                 match = src_var_idx.get(v); break
         cols.append(match if match is not None else -1)
     n_present = sum(1 for c in cols if c is not None and c >= 0)
@@ -425,13 +479,14 @@ for flavor in FLAVORS:
     print(f"  {flavor}: coverage {n_present}/{len(target_genes)} ({100*n_present/len(target_genes):.1f}%) -> {out}")
 PY
 
-# Phase 2: round-trip via CellOT env (anndata 0.7) to v07 files.
+# Phase 2: rewrite for the CellOT env (anndata 0.7.6). Suffix is _anndata07
+# so it cannot be confused with the atlas_full_v07 *model set*.
 # Required for the legacy CellOT env, harmless (but unnecessary) under CellOT_v3.
 echo ""
-echo "=== Phase 2: round-trip to anndata 0.7 ==="
+echo "=== Phase 2: round-trip to anndata 0.7 format (_anndata07) ==="
 for flavor in "${FLAVORS[@]}"; do
     src="$OUTDIR/${TAG}_aligned_${flavor}${SET_SUFFIX}.h5ad"
-    dst="$OUTDIR/${TAG}_aligned_${flavor}${SET_SUFFIX}_v07.h5ad"
+    dst="$OUTDIR/${TAG}_aligned_${flavor}${SET_SUFFIX}_anndata07.h5ad"
     [[ -f "$dst" ]] && rm -f "$dst"
     cp "$src" "$dst"
 done
@@ -444,7 +499,7 @@ FLAVORS = FLAVORS.split()
 
 # Strip empty groups
 for flavor in FLAVORS:
-    p = f"{OUTDIR}/{TAG}_aligned_{flavor}{SET_SUFFIX}_v07.h5ad"
+    p = f"{OUTDIR}/{TAG}_aligned_{flavor}{SET_SUFFIX}_anndata07.h5ad"
     with h5py.File(p, "r+") as f:
         for g in ("layers","obsm","obsp","uns","varm","varp"):
             if g in f and len(f[g].keys())==0: del f[g]
@@ -488,7 +543,7 @@ def load_X(f):
     return n[:]
 
 for flavor in FLAVORS:
-    p = f"{OUTDIR}/{TAG}_aligned_{flavor}{SET_SUFFIX}_v07.h5ad"
+    p = f"{OUTDIR}/{TAG}_aligned_{flavor}{SET_SUFFIX}_anndata07.h5ad"
     with h5py.File(p,"r") as f:
         obs=load_obs(f); var=load_var(f); X=load_X(f)
     a=ad.AnnData(X=X,obs=obs,var=var)
@@ -527,7 +582,7 @@ for flavor in FLAVORS:
     results_subdir = RESULTS_TEMPLATE.replace("{flavor}", flavor)
     atlas_path = f"{OUTDIR}/{AXIS_TEMPLATE.replace('{flavor}', flavor)}"
     genes_txt = f"{RESULTS}/{results_subdir}/genes.txt"
-    src_path = f"{OUTDIR}/{TAG}_aligned_{flavor}{SET_SUFFIX}_v07.h5ad"
+    src_path = f"{OUTDIR}/{TAG}_aligned_{flavor}{SET_SUFFIX}_anndata07.h5ad"
     src = ad.read(src_path)
 
     # Second half of the phase-0 contract: the cells we are about to feed the

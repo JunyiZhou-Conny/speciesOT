@@ -40,8 +40,8 @@ USAGE (CellOT env)
     conda activate CellOT
     python scripts/eval_external_target.py \
         --pred   .../bcg_unvax_predicted_human_via_impact_cellot_pearson_residuals.h5ad \
-        --target .../bcg_unvax_human_aligned_pearson_residuals_v07.h5ad \
-        --source .../bcg_unvax_mouse_aligned_pearson_residuals_v07.h5ad \
+        --target .../bcg_unvax_human_aligned_pearson_residuals_anndata07.h5ad \
+        --source .../bcg_unvax_mouse_aligned_pearson_residuals_anndata07.h5ad \
         --aedir  cellot/cellot_gpu/results/atlas_full_pearson_residuals/model-scgen \
         --tag    bcg_unvax_impact_pearson
 
@@ -93,9 +93,9 @@ def _load_cloud(path: Path, layer: str | None, label: str):
         raise SystemExit(
             f"[external-eval] could not read {label} at {path}\n"
             f"  {type(exc).__name__}: {exc}\n"
-            "  If this file was written by a modern anndata, use the '_v07' variant "
-            "produced by scripts/predict_new_input.sh phase 2, or re-run that "
-            "round-trip on it."
+            "  If this file was written by a modern anndata, use the '_anndata07' "
+            "copy from scripts/predict_new_input.sh phase 2 (anndata 0.7 format; "
+            "not the atlas_full_v07 model set), or re-run that round-trip on it."
         )
 
     if layer:

@@ -53,6 +53,10 @@ MODEL_SETS = {
         "flavors": ["seurat_v3", "pearson_residuals"],
         "results_template": "atlas_full_{flavor}",
     },
+    "uncapped_v08": {
+        "flavors": ["pearson_residuals", "mixhvg"],
+        "results_template": "hvg_{flavor}_uncapped_v08",
+    },
     "uncapped_v08_iid": {
         "flavors": ["pearson_residuals", "mixhvg"],
         "results_template": "hvg_{flavor}_a_uncapped_v08_iid",

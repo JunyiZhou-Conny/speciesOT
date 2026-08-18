@@ -1,0 +1,58 @@
+experiment_tag: hvg_mixhvg_uncapped_v08
+derived_from: gpu/hvg_mixhvg_a_uncapped_v08_iid/impact_cellot
+data_source: speciesot-human-mouse-hvg
+data_file: datasets/speciesot-human-mouse-hvg/hvg_mixhvg_a_uncapped_v08.h5ad
+source_datasets:
+  mouse: /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_muris/tabula_muris_all.h5ad
+  human: /n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_sapiens/tabula_sapiens_all.h5ad
+assay_filter:
+  mouse:
+  - chromium_v2
+  human:
+  - chromium_v3
+cap_cells_per_type:
+  mouse: null
+  human: null
+ortholog_source: biomart
+source_backed: true
+hvg_method: mixhvg
+hvg_n_top: 1000
+hvg_input_layer: layers['counts']
+hvg_batch_key: species
+log1p_applied: true
+condition_column: condition
+source: mouse
+target: human
+holdout_cell_types: []
+holdout_species: null
+datasplit_strategy: train_test
+test_size: 0.05
+random_state: 0
+scgen_hidden_units:
+- 256
+- 256
+scgen_latent_dim: 50
+scgen_lr: 0.001
+scgen_batch_size: 256
+scgen_n_iters: 50000
+impact_hidden_units:
+- 64
+- 64
+- 64
+- 64
+impact_latent_dim: 50
+impact_lr: 0.0001
+impact_batch_size: 128
+impact_n_iters: 50000
+impact_n_inner_iters: 10
+impact_train_device: cpu
+data_space_n_cells: 30,50,80
+notes: >
+  DEPLOYMENT twin of specs/atlas_uncapped_pearson_v08.yaml, differing ONLY in
+  hvg_method: mixhvg. Ordinary train_test split: all cell types stay in the
+  train pool (no toggle_ood, no CD8 / CL:0000625 holdout, no species holdout).
+  5% of cells (~4.5k of 89,760) are a monitor split for eval_freq only. Same
+  architecture and seed as specs/atlas_full_mixhvg_v08_iid.yaml. Reuses
+  hvg_mixhvg_a_uncapped_v08.h5ad; no new prep. BCG can use this when model.pt
+  exists. The existing *_a_uncapped_v08_iid twins stay the interim deployment
+  set until these finish.

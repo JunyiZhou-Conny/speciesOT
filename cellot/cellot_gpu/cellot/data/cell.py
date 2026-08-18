@@ -258,6 +258,12 @@ def load_cell_data(
     return tuple(returns)
 
 
+# sklearn.model_selection.train_test_split keys that this helper may forward.
+# Extra datasplit keys (mode, key, holdout, stratify, name, groupby) must not
+# reach sklearn — they crash train_test. toggle_ood consumes those itself.
+_SKLEARN_TRAIN_TEST_KEYS = ("test_size", "train_size", "shuffle")
+
+
 def split_cell_data_train_test(
     data, groupby=None, random_state=0, holdout=None, subset=None, **kwargs
 ):
@@ -267,8 +273,11 @@ def split_cell_data_train_test(
     if groupby is not None:
         groups = data.obs.groupby(groupby).groups
 
+    sklearn_kwargs = {k: kwargs[k] for k in _SKLEARN_TRAIN_TEST_KEYS if k in kwargs}
     for key, index in groups.items():
-        trainobs, testobs = train_test_split(index, random_state=random_state, **kwargs)
+        trainobs, testobs = train_test_split(
+            index, random_state=random_state, **sklearn_kwargs
+        )
         split.loc[trainobs] = "train"
         split.loc[testobs] = "test"
 

@@ -195,6 +195,8 @@ impact_train_device: gpu            # "gpu" (V100-pinned) or "cpu"
 
 All fields except `experiment_tag` and `data_file` have defaults matching the existing matrix conventions. Override only what's different. Note the two treatments differ in their defaults: **`assay_filter` defaults to the values shown** (mouse `chromium_v2` / human `chromium_v3`), so even a minimal spec gets single-platform filtering; **`datasplit_stratify` defaults to `null`** (the original unstratified split, kept for backward-compatibility with the existing matrix) — set it to `condition` to balance the OOD split by species.
 
+`datasplit_strategy: train_test` is a plain sklearn split (no cell-type holdout). `./hub generate` then writes only `name` / `groupby` / `random_state` / `test_size` into the config `datasplit:` block — do **not** set `datasplit_stratify` on these specs (`stratify` would be a column name, not labels). `toggle_ood` specs still get `key` / `holdout` / `mode` / optional `stratify`. The spec schema may still have a `mode` field; it is not written into a `train_test` config.
+
 ### What `./hub generate` writes
 
 For a spec with tag `<tag>`:
