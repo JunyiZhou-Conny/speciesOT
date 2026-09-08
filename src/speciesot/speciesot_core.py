@@ -132,6 +132,10 @@ class Experiment:
         self.evaluations = []
         self.frozen_ae = frozen_ae
 
+    @classmethod
+    def from_spec(cls, path, frozen_ae=None):
+        return cls(path, frozen_ae=frozen_ae)
+
     def load_experiment_spec(self):
         with open(self.experiment_spec_path, "r") as f:
             return yaml.safe_load(f)
@@ -155,6 +159,10 @@ class Experiment:
             from .ae import AutoEncoderModel
 
             self.models.append(AutoEncoderModel(self.experiment_spec_path))
+        if "CellOTModel" in models:
+            from .cellot_model import CellOTModel
+
+            self.models.append(CellOTModel(self.experiment_spec_path, frozen_ae=self.frozen_ae))
         self.evaluations.append(DummyEvaluation())
         for model in self.models:
             model.setup()
