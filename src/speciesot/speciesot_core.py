@@ -4,6 +4,7 @@ from typing import List
 import scanpy as sc
 import numpy as np
 import pandas as pd
+import anndata as ad
 
 
 class AbstractModel(abc.ABC):
@@ -20,8 +21,7 @@ class AbstractModel(abc.ABC):
         raise NotImplementedError
 
 class AbstractEvaluation(abc.ABC):
-    @abc.abstractmethod
-    def evaluate(self):
+    def evaluate(self, predicted: ad.AnnData, truth: ad.AnnData):
         raise NotImplementedError
 
 
@@ -31,6 +31,9 @@ class TrainingData(abc.ABC):
         self.target_training_data_path = target_training_data_path
         self.source_adata = sc.read_h5ad(source_training_data_path)
         self.target_adata = sc.read_h5ad(target_training_data_path)
+
+
+    
 
 
 class TestData(abc.ABC):
@@ -50,6 +53,7 @@ class Experiment(abc.ABC):
         self.test_data = None
         self.models = []
         self.evaluations = []
+        self.predictions = []
 
     def load_experiment_spec(self):
         with open(self.experiment_spec_path, 'r') as f:
@@ -69,18 +73,27 @@ class Experiment(abc.ABC):
         for model in self.models:
             model.setup()
 
+        # set up models
+        if 'R2Evaluation' in self.experiment_spec['evaluations']:
+            self.evaluations.append(R2Evaluation())
+            
+
     def train(self):
         for model in self.models:
             model.train()
 
     def predict(self):
         for model in self.models:
-            model.predict(self.test_data)
+            p = model.predict(self.test_data) # p is an anndate object
+            self.predictions.append(p)
+        
 
     def evaluate(self):
-        for model in self.models:
+        for p in self.predictions:
             for evaluation in self.evaluations:
-                evaluation.evaluate(model, self.test_data)
+                # Should it be predicted data set
+                evaluation.evaluate(p, self.test_data.target_adata)
+            
 
 
 class IdentityModel(AbstractModel):
@@ -95,8 +108,21 @@ class IdentityModel(AbstractModel):
 
 
 class DummyEvaluation(AbstractEvaluation):
-    def evaluate(self):
+    def evaluate(self, predicted: ad.AnnData, truth: ad.AnnData):
         return 1
 
+
+class R2Evaluation(AbstractEvaluation):
+    # Parent class no longer abstract, constructor inherited
+
+    def evaluate(self, predicted: ad.AnnData, truth: ad.AnnData):
+        # Check class inheritance
+        # Chance that X is a sparse matrix
+        a = predicted.X - predicted.X.mean(0)
+        b = truth.X - truth.X.mean(0)
+        numerator = (a * b).sum(0)
+        denominator = np.sqrt((a**2).sum(0) * (b**2).sum(0))
+        valid = denominator > 1e-12
+        return float(np.mean((numerator[valid] / denominator[valid]) ** 2))
 
 
