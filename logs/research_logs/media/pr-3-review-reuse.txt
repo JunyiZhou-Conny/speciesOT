@@ -1,0 +1,29 @@
+PR-3 review: FrozenAE reuse (lane 5)
+
+shared True
+train_called False
+model_pt_mtime_unchanged True
+model_pt_size_unchanged True
+
+lane 1 shared directory
+HEAD
+dir1 /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/cellot/cellot_gpu/results/atlas_full_pearson_residuals/scgen
+dir2 /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT/cellot/cellot_gpu/results/atlas_full_pearson_residuals/scgen
+same True
+is True
+PARENT lacks FrozenAE
+parent_has_FrozenAE False
+
+lane 6 gene_axis_sha256 match
+bake afab9f6f6a1b2278575a72d26d6638368837a361954b242f4ac5377d1ba86673
+wrap afab9f6f6a1b2278575a72d26d6638368837a361954b242f4ac5377d1ba86673
+equal True
+
+lane 3 code_means from last.pt
+attached True
+n_keys 2
+from_last True
+type AutoEncoder
+input_dim_genes 1000
+
+PASS: two experiments share one FrozenAE; train not called; model.pt unchanged

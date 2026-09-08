@@ -1,0 +1,10 @@
+training_data:
+  source_training_data_path: "/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/tb/data/mouse_bcg/bcg_treated_scanvi_081826.h5ad"
+  target_training_data_path: "/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/tb/data/human_bcg/bcg_treated_scanvi_082626.h5ad"
+
+test_data:
+  source_test_data_path: "/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/tb/data/mouse_bcg/bcg_treated_scanvi_081826.h5ad"
+  target_test_data_path: "/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/tb/data/human_bcg/bcg_treated_scanvi_082626.h5ad"
+
+models:
+  - IdentityModel

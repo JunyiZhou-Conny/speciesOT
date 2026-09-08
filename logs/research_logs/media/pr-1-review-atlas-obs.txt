@@ -1,0 +1,18 @@
+PR-1 review: DatasetHandle atlas obs (lane 2)
+
+DatasetHandle n_obs=1136218 n_vars=61759 path=/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/tabula_sapiens/tabula_sapiens_all.h5ad
+n_obs 1136218
+opened_X False
+
+perf head (/usr/bin/time -v DatasetHandle on tabula_sapiens_all.h5ad)
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:07.32
+	Maximum resident set size (kbytes): 275316
+	Exit status: 0
+
+perf trunk (TrainingData eager sc.read_h5ad on the same file, ulimit -v 4GB)
+numpy._core._exceptions._ArrayMemoryError: Unable to allocate 13.2 GiB
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:06.07
+	Maximum resident set size (kbytes): 275648
+	Exit status: 1
+
+PASS: n_obs=1136218; head RSS 269 MB < 2000 MB; X not loaded
