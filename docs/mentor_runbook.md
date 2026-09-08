@@ -239,6 +239,12 @@ cd /n/holylabs/mooney_lab/Lab/junyizhou/speciesOT
 bash scripts/predict_new_input.sh /path/to/bcg_mouse_unvax.h5ad bcg_unvax
 ```
 
+The same baked bundle is also `ReferenceBundle.load(results/<tag>).predict(new_mouse.h5ad)`
+in `src/speciesot/bundle.py`. That is the Python entry for the handover, not a
+second stack: `genes.txt`, `scgen_shift.pt`, AE weights, and CellOT weights.
+Gene projection is one first-wins helper (`project_genes`). Decoded scoring
+still needs the training atlas.
+
 The second argument is a tag used to name the outputs. This script activates both
 environments itself; you do not need to `conda activate` anything. Add
 `--model-set uncapped_v08_iid` to use the v08 models instead of the default

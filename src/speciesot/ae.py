@@ -261,3 +261,12 @@ class FrozenAE:
             inputs = torch.as_tensor(inputs)
         with torch.no_grad():
             return model.eval().encode(inputs)
+
+    def decode(self, codes):
+        import torch
+
+        model = self._load_autoencoder()
+        if not torch.is_tensor(codes):
+            codes = torch.as_tensor(codes)
+        with torch.no_grad():
+            return model.eval().decode(codes)
