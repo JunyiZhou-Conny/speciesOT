@@ -1,9 +1,6 @@
 import abc
 import yaml
-from typing import List
 import scanpy as sc
-import numpy as np
-import pandas as pd
 
 
 class AbstractModel(abc.ABC):
@@ -19,9 +16,10 @@ class AbstractModel(abc.ABC):
     def predict(self):
         raise NotImplementedError
 
+
 class AbstractEvaluation(abc.ABC):
     @abc.abstractmethod
-    def evaluate(self):
+    def evaluate(self, model, test_data):
         raise NotImplementedError
 
 
@@ -52,20 +50,22 @@ class Experiment(abc.ABC):
         self.evaluations = []
 
     def load_experiment_spec(self):
-        with open(self.experiment_spec_path, 'r') as f:
+        with open(self.experiment_spec_path, "r") as f:
             return yaml.safe_load(f)
 
     def setup(self):
-        # set up training data
-        self.training_data = TrainingData(self.experiment_spec['training_data']['source_training_data_path'], self.experiment_spec['training_data']['target_training_data_path'])
-
-        # set up test data
-        self.test_data = TestData(self.experiment_spec['test_data']['source_test_data_path'], self.experiment_spec['test_data']['target_test_data_path'])
-
-        # set up models
-        if 'IdentityModel' in self.experiment_spec['models']:
+        spec = self.experiment_spec
+        self.training_data = TrainingData(
+            spec["training_data"]["source_training_data_path"],
+            spec["training_data"]["target_training_data_path"],
+        )
+        self.test_data = TestData(
+            spec["test_data"]["source_test_data_path"],
+            spec["test_data"]["target_test_data_path"],
+        )
+        if "IdentityModel" in spec["models"]:
             self.models.append(IdentityModel())
-
+        self.evaluations.append(DummyEvaluation())
         for model in self.models:
             model.setup()
 
@@ -74,16 +74,22 @@ class Experiment(abc.ABC):
             model.train()
 
     def predict(self):
+        outputs = []
         for model in self.models:
-            model.predict(self.test_data)
+            outputs.append(model.predict(self.test_data))
+        return outputs[-1] if outputs else None
 
     def evaluate(self):
+        results = []
         for model in self.models:
             for evaluation in self.evaluations:
-                evaluation.evaluate(model, self.test_data)
+                results.append(evaluation.evaluate(model, self.test_data))
+        return results[-1] if results else None
 
 
 class IdentityModel(AbstractModel):
+    """No-transport ceiling. predict returns source cells as if they were the target."""
+
     def setup(self):
         pass
 
@@ -95,8 +101,5 @@ class IdentityModel(AbstractModel):
 
 
 class DummyEvaluation(AbstractEvaluation):
-    def evaluate(self):
+    def evaluate(self, model, test_data):
         return 1
-
-
-

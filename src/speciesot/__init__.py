@@ -1,3 +1,3 @@
-from .speciesot_core import Experiment
+from .speciesot_core import DummyEvaluation, Experiment, IdentityModel
 
-__all__ = ["Experiment"]
+__all__ = ["DummyEvaluation", "Experiment", "IdentityModel"]
