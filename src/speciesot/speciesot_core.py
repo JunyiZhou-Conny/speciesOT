@@ -145,8 +145,13 @@ class Experiment:
             spec["test_data"]["source_test_data_path"],
             spec["test_data"]["target_test_data_path"],
         )
-        if "IdentityModel" in spec["models"]:
+        models = spec.get("models") or []
+        if "IdentityModel" in models:
             self.models.append(IdentityModel())
+        if "AutoEncoderModel" in models:
+            from .ae import AutoEncoderModel
+
+            self.models.append(AutoEncoderModel(self.experiment_spec_path))
         self.evaluations.append(DummyEvaluation())
         for model in self.models:
             model.setup()
