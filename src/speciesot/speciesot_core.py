@@ -164,6 +164,15 @@ class Experiment:
 
             self.models.append(CellOTModel(self.experiment_spec_path, frozen_ae=self.frozen_ae))
         self.evaluations.append(DummyEvaluation())
+        wanted = spec.get("evaluations") or []
+        if (
+            "DecodedFrameEvaluation" in wanted
+            or "CellOTModel" in models
+            or "AutoEncoderModel" in models
+        ):
+            from .evaluation import DecodedFrameEvaluation
+
+            self.evaluations.append(DecodedFrameEvaluation())
         for model in self.models:
             model.setup()
 
