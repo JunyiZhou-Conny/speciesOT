@@ -123,13 +123,14 @@ class TestData:
 
 
 class Experiment:
-    def __init__(self, experiment_spec_path: str):
+    def __init__(self, experiment_spec_path: str, frozen_ae=None):
         self.experiment_spec_path = experiment_spec_path
         self.experiment_spec = self.load_experiment_spec()
         self.training_data = None
         self.test_data = None
         self.models = []
         self.evaluations = []
+        self.frozen_ae = frozen_ae
 
     def load_experiment_spec(self):
         with open(self.experiment_spec_path, "r") as f:
@@ -137,6 +138,9 @@ class Experiment:
 
     def setup(self):
         spec = self.experiment_spec
+        models = spec.get("models") or []
+        if "CellOTModel" in models and self.frozen_ae is None:
+            raise FileNotFoundError("missing FrozenAE handle")
         self.training_data = TrainingData(
             spec["training_data"]["source_training_data_path"],
             spec["training_data"]["target_training_data_path"],
@@ -145,7 +149,6 @@ class Experiment:
             spec["test_data"]["source_test_data_path"],
             spec["test_data"]["target_test_data_path"],
         )
-        models = spec.get("models") or []
         if "IdentityModel" in models:
             self.models.append(IdentityModel())
         if "AutoEncoderModel" in models:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,30 @@ def _interpreter_for_device(device: str) -> str:
     if device in {"gpu", "cuda", "CellOT_gpu"}:
         return "CellOT_gpu"
     return "CellOT"
+
+
+def _bake_mod():
+    path = _repo_root() / "scripts" / "bake_model_artifacts.py"
+    spec = importlib.util.spec_from_file_location("bake_model_artifacts", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _resolve_scgen_dir(path: Path) -> Path:
+    path = Path(path).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"missing FrozenAE handle: {path}")
+    path = path.resolve()
+    if (path / "cache" / "model.pt").is_file():
+        return path
+    link = path / "model-scgen"
+    if link.exists():
+        return _resolve_scgen_dir(link)
+    nested = path / "scgen"
+    if (nested / "cache" / "model.pt").is_file():
+        return nested
+    raise FileNotFoundError(f"missing FrozenAE handle: {path}")
 
 
 @dataclass(frozen=True)
@@ -124,3 +149,115 @@ class AutoEncoderModel(AbstractModel):
 
     def predict(self, test_data=None):
         raise NotImplementedError("FrozenAE.encode owns AE predict")
+
+
+class FrozenAE:
+    """Directory handle for a trained scGen AE. encode uses eval() and no_grad."""
+
+    def __init__(self, directory: Path, gene_axis_sha256=None, genes=None, checkpoint_sha256=None):
+        self.directory = Path(directory)
+        self.model_pt = self.directory / "cache" / "model.pt"
+        self.last_pt = self.directory / "cache" / "last.pt"
+        self.shift_pt = self.directory / "cache" / "scgen_shift.pt"
+        self.gene_axis_sha256 = gene_axis_sha256
+        self.genes = genes
+        self.checkpoint_sha256 = checkpoint_sha256
+
+    @classmethod
+    def load(cls, path):
+        directory = _resolve_scgen_dir(Path(path))
+        bake = _bake_mod()
+        checkpoint_sha256 = bake.file_sha256(directory / "cache" / "model.pt")
+        genes = None
+        axis = None
+        genes_txt = directory / "genes.txt"
+        if not genes_txt.is_file():
+            genes_txt = directory.parent / "genes.txt"
+        if genes_txt.is_file():
+            genes = genes_txt.read_text().splitlines()
+            axis = bake.gene_axis_sha256(genes)
+        handle = cls(
+            directory,
+            gene_axis_sha256=axis,
+            genes=genes,
+            checkpoint_sha256=checkpoint_sha256,
+        )
+        if handle.shift_pt.is_file():
+            handle._assert_shift_fresh()
+            if handle.gene_axis_sha256 is None:
+                import torch
+
+                payload = torch.load(handle.shift_pt, map_location="cpu")
+                handle.gene_axis_sha256 = payload.get("gene_axis_sha256")
+        return handle
+
+    def _assert_shift_fresh(self):
+        import torch
+
+        payload = torch.load(self.shift_pt, map_location="cpu")
+        axis = payload.get("gene_axis_sha256")
+        if self.gene_axis_sha256 and axis and axis != self.gene_axis_sha256:
+            raise ValueError(f"stale scgen_shift.pt gene_axis_sha256 {axis}")
+        ckpt_sha = payload.get("model_checkpoint_sha256")
+        if ckpt_sha and self.checkpoint_sha256 and ckpt_sha != self.checkpoint_sha256:
+            raise ValueError(f"stale scgen_shift.pt model hash {ckpt_sha}")
+
+    def _load_autoencoder(self):
+        cellot_root = str(_cellot_root())
+        if cellot_root not in sys.path:
+            sys.path.insert(0, cellot_root)
+        from cellot.models.ae import load_autoencoder_model
+        from cellot.utils import load_config
+
+        config = load_config(self.directory / "config.yaml")
+        input_dim = len(self.genes) if self.genes else None
+        if input_dim is None and self.shift_pt.is_file():
+            import torch
+
+            payload = torch.load(self.shift_pt, map_location="cpu")
+            input_dim = payload.get("n_genes")
+        if input_dim is None:
+            bake = _bake_mod()
+            results_root = self.directory.resolve()
+            cellot_dir = results_root
+            while cellot_dir.name != "cellot_gpu" and cellot_dir != cellot_dir.parent:
+                cellot_dir = cellot_dir.parent
+            if cellot_dir.name != "cellot_gpu":
+                cellot_dir = _cellot_root()
+            train_path = bake.resolve_train_path(config, str(cellot_dir))
+            genes = bake.h5ad_var_names(train_path)
+            input_dim = len(genes)
+            if self.genes is None:
+                self.genes = genes
+            if self.gene_axis_sha256 is None:
+                self.gene_axis_sha256 = bake.gene_axis_sha256(genes)
+        kwargs = {"input_dim": int(input_dim)}
+        model, _ = load_autoencoder_model(
+            config,
+            restore=str(self.model_pt),
+            device="cpu",
+            **kwargs,
+        )
+        if not hasattr(model, "code_means"):
+            if self.shift_pt.is_file():
+                self._assert_shift_fresh()
+                import torch
+
+                payload = torch.load(self.shift_pt, map_location="cpu")
+                model.code_means = payload["code_means"]
+            elif self.last_pt.is_file():
+                import torch
+
+                ckpt = torch.load(self.last_pt, map_location="cpu")
+                if "code_means" in ckpt:
+                    model.code_means = ckpt["code_means"]
+        return model
+
+    def encode(self, inputs):
+        import torch
+
+        model = self._load_autoencoder()
+        if not torch.is_tensor(inputs):
+            inputs = torch.as_tensor(inputs)
+        with torch.no_grad():
+            return model.eval().encode(inputs)

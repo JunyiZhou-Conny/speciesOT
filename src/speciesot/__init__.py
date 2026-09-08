@@ -1,4 +1,4 @@
-from .ae import AutoEncoderModel, JobPlan
+from .ae import AutoEncoderModel, FrozenAE, JobPlan
 from .speciesot_core import DatasetHandle, DummyEvaluation, Experiment, IdentityModel
 
 __all__ = [
@@ -6,6 +6,7 @@ __all__ = [
     "DatasetHandle",
     "DummyEvaluation",
     "Experiment",
+    "FrozenAE",
     "IdentityModel",
     "JobPlan",
 ]
