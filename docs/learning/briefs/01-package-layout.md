@@ -1,0 +1,14 @@
+# Brief: What does `from speciesot import Experiment` load?
+
+Episode request: none yet. This is a proposal. Do not open an episode branch until it is approved.
+
+- **Learning objective.** You can point at the file that runs when you type `from speciesot import Experiment`, and you can tell the 128-line file in git from the longer file in the 2026-10-14 upload.
+- **Audience.** You can run notebooks. Package layout, abstraction, and pytest are new. You lose the thread of which notebook you already ran, and of when to open scgen or cellot versus our code.
+- **Style / format.** `swiss`, 240 s, 1920×1080 at 30 fps, English narration (Kokoro `af_heart`, 0.95), burned Chinese-above-English captions, composed score. Shared components live in the explainer repository at explainer/styles/swiss.py. Do not invent a palette.
+- **Evidence rule.** On-screen code is copied from the files below. The upload is `src_aa1d.zip`, dated 2026-10-14, and it is not in git. Abbreviated arrows in the diagram are labels. The file paths and line ranges are the real ones.
+- **Must include.** `pyproject.toml:19-20` (`where = ["src"]`). `src/speciesot/__init__.py:1-3`, which is `from .speciesot_core import Experiment`. `src/speciesot/speciesot_core.py:48-83`, the committed `Experiment.setup` and `Experiment.train`. A side-by-side of that 128-line file with `zip:src/speciesot/speciesot_core.py:212-225`, where `scGenModel` begins.
+- **Skip.** How pytest collects tests. How the hub trains. Those are later episodes.
+- **Structure.** s01 hook. You write `from speciesot import Experiment` and Python answers. The puzzle is which file that name is. s02 `pyproject.toml` points setuptools at `src`. s03 the one-line import in `src/speciesot/__init__.py:1`. s04 the committed class loads a yaml and calls `model.train()` with no arguments (`src/speciesot/speciesot_core.py:81-83`). s05 the upload is a different, longer file in the same place. Ponder. If the notebook imported the installed package, which of those two files ran? s06 recap. The name `speciesot` is the `src` tree. The notebook is a caller.
+- **Misconception to break.** A package is a folder of notebooks, and editing any file named speciesot_core.py changes what the notebook imports.
+- **Mechanism diagram.** Three boxes in a line. `pyproject.toml:19-20` points at `src`. `src/speciesot/__init__.py:1` imports `Experiment`. `src/speciesot/speciesot_core.py:48` defines that class. A second copy of the last box fades in beside it, labeled as the upload, 346 lines, with `scGenModel` at `zip:src/speciesot/speciesot_core.py:212`. The arrow from the import lands on only one box at a time.
+- **Read alongside.** `pyproject.toml:19-20`. `src/speciesot/__init__.py:1-3`. `src/speciesot/speciesot_core.py:48-83`. `zip:src/speciesot/speciesot_core.py:67-83` and `zip:src/speciesot/speciesot_core.py:212-225`. `e24_src_example.ipynb`, which imports `Experiment` and does not define it.
