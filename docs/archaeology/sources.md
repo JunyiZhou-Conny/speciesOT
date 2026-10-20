@@ -27,6 +27,8 @@ Citation prefixes used across `docs/archaeology/`:
 | `josh@<branch>:<path>`, `josh@<sha>` | `JoshuaPrice/speciesOT` |
 | `autoresearch:`, `ablation:`, `ai_package@src:` | the other repos below |
 | `fasrc:BK/<path>` | `/n/holylabs/mooney_lab/Lab/junyizhou/speciesOT-backup-2026-10-01/speciesOT/<path>` |
+| `fasrc:JOSH/<path>` | `/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/<path>`, Josh's own FASRC folder (raw atlases, BCG data) |
+| `fasrc:/n/<path>` | any other absolute FASRC path |
 | `mac:<path>` | a file under `~/Desktop/` on Conny's Mac that is not in git |
 
 ## GitHub repositories
@@ -62,7 +64,7 @@ ignored:
 | `logs/`, `sbatch/` | 5.2 MB, 571 KB | Run logs, 538 job scripts, and two untracked research logs: the 2026-08-19 PI slides and the unexecuted 2026-09-08 package plan. |
 | `results/external_eval/` | 3.1 MB | Self-tests of the external-target evaluator (2026-07-30). |
 | `.cursor-assets/` | 5.7 MB | Five figures from 2026-07-21. |
-| `scgen-reproducibility/`, `scgen-cellot-unbalanced/`, `speciesOT/` | 0 | Empty folder skeletons. The real `scgen-reproducibility` is inside `scgen-cellot-ablation/`. The unbalanced-OT result folders are empty, although Slurm shows the four `uotA_lps` jobs completed on 2026-07-21, so those outputs are lost. |
+| `scgen-reproducibility/`, `scgen-cellot-unbalanced/`, `speciesOT/` | 0 | Empty folder skeletons. The real `scgen-reproducibility` is inside `scgen-cellot-ablation/`. The unbalanced-OT result folders are empty, although Slurm shows its jobs completed on 2026-07-21 (five, see [F14](experiments/F14-july-plans-a-to-d.md)), so those outputs are lost. |
 
 ### Other FASRC locations
 
@@ -70,12 +72,15 @@ ignored:
 |---|---|---|
 | `Conny_speciesOT/` (343 MB) | Clone of this repo | `main` 109bf12, clean, no ignored files |
 | `Josh_speciesOT/` (266 MB) | Clone of Josh's repo | `scgen-model-impl` 3eb6555 with three uncommitted files: `src/speciesot/speciesot_core.py`, `e24_src_example.ipynb`, `src/speciesot/Tests/e24_replica.ipynb` |
-| `/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/` | Josh's raw inputs, e.g. `tabula_sapiens/tabula_sapiens_all.h5ad` (42.06 GB) and `tabula_muris/tabula_muris_all.h5ad` (5.62 GB) | — |
+| `/n/holylabs/mooney_lab/Lab/joshprice/speciesOT/data/` | Josh's raw inputs, e.g. `tabula_sapiens/tabula_sapiens_all.h5ad` (about 45 GB) and `tabula_muris/tabula_muris_all.h5ad` (about 6 GB) | — |
 | `/n/netscratch/mooney_lab/Lab/jmprice/bcg_fastqs/` | Josh's raw BCG reads (2026-08-25) | netscratch is scratch space; FASRC purges old files there |
 | Conda envs under `/n/home01/jzhou1125/` | `analysis` (py3.12, scanpy 1.12, scgen 2.1.1, POT 0.9.6), `scgen_tf1` (py3.7, TensorFlow 1.15), `CellOT` (py3.9, torch 1.11, editable `cellot`), `CellOT_gpu` (torch 2.3.1), `CellOT_v3` (py3.11) | — |
 
-Slurm accounting goes back only to 2026-03-30. From then to 2026-10-20 there
-are 1,265 jobs. The last speciesOT compute job ran on 2026-08-18.
+Slurm accounting goes back only to 2026-03-30. From then to 2026-10-20 a plain
+time-window query finds 1,265 jobs. That undercounts: jobs cancelled while
+waiting on a dependency are left out unless their states are requested
+([F11](experiments/F11-bunne-lps-replication.md) found 72 jobs where the plain
+query shows 20). The last speciesOT compute job ran on 2026-08-18.
 
 ## Conny's Mac
 
