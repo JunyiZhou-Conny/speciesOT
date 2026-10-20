@@ -16,7 +16,7 @@ Read-only: the only file written is the CSV given by --out.
 repositories under $SRC:
 
     python docs/archaeology/tools/build_inventory.py \
-        --repo conny=. \
+        --repo conny=.@origin/main \
         --repo josh_main=$SRC/speciesOT-josh@origin/main \
         --repo josh_cellot=$SRC/speciesOT-josh@origin/cellot \
         --repo josh_pkg=$SRC/speciesOT-josh@origin/scgen-model-impl \
@@ -51,6 +51,51 @@ TRACKED_IMPORTS = {
 }
 IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+([A-Za-z_][\w]*)", re.M)
 H5AD_RE = re.compile(r"[\w./~${}-]*\.h5ad")
+
+# Which experiment-family page (docs/archaeology/experiments/) covers a file.
+# First match wins; patterns are matched against "<repo>:<path>".
+FAMILY_RULES = [
+    (r"^(autoresearch):", "F13"),
+    (r"^(ablation):", "F12"),
+    (r"^(ai_package):", "F18"),
+    (r"(^|/|:)src/speciesot/|e24_src_example|example_debugging", "F18"),
+    (r"(^|/|:)(tabula_eda|tabula_make_samples|intraspecies_vs_interspecies_dists"
+     r"|pca_sinkhorn_optimization)\.ipynb|/phylogeny/|:phylogeny/"
+     r"|e[5-8]_[a-z_]+\.ipynb|speciesot_(simulation_)?helpers\.py|pytorch_helpers\.py", "F01"),
+    (r"perturbOT_tutorial|(^|/|:)e(1|3|4|12|21)_[a-z_0-9]+\.ipynb", "F02"),
+    (r"(^|/|:)e(2|9|10|11|13)_[a-z_]+\.ipynb", "F03"),
+    (r"(^|/|:)e(14|15|16|17|19)_[a-z_]+\.ipynb", "F04"),
+    (r"(^|/|:)tb/|(^|/|:)e(20|22|23)_|analysis/(16|16\.[1-4]|17)_"
+     r"|plot_bcg_paper_figures|score_bcg_and_plot", "F17"),
+    (r"analysis/(archive/)?(01\.2|01\.3|08\.1|09|10|11)_", "F07"),
+    (r"analysis/(archive/)?(01\.1|01\.4|01\.5|13|14)_|hvg_flavor", "F08"),
+    (r"analysis/(archive/)?15_|atlas_full_|atlas_uncapped_|mixhvg_|predict_new_input"
+     r"|eval_external_target|bake_model_artifacts|h5ad_to_v07|generate_atlas_full_configs"
+     r"|verify_offline_bundle|uncapped_chain|research_log_2026-07-30", "F16"),
+    (r"analysis/(19|20|21|21\.1|21\.2|22)_|umap_learn_and_investigate|m1_atlas_ood_outlier|specs/(m1_modern|m2_baseline"
+     r"|atlas_cd8_uncapped)|scripts/(extended_metrics|decoded_frame_metrics|mmd_floor"
+     r"|ae_identity_metrics|dump_eval_clouds)|research_log_2026-06-09", "F10"),
+    (r"analysis/(23|24)_|paper_crossspecies|explore_LPS_dataset|research_log_2026-06-1[34]", "F11"),
+    (r"lps_icnn_ae_study|research_log_2026-07-20", "F13"),
+    (r"lps_scgen_ae_followup|e3_devar_confirmation|research_log_2026-07-2[37]", "F15"),
+    (r"atlas-paper-vae/|atlas_paper_vae|scgen-cellot-unbalanced/|agent_plans_2026-07-21", "F14"),
+    (r"research_log_2026-03-15", "F05"),
+    (r"(^|/|:)e18_|speciesOT/visualization/", "F06"),
+    (r"analysis/|research_log_2026-0(3-2|3-3|4-0[1-7])|baseline/|biomart", "F06"),
+    (r"research_log_2026-04-(08|13|20)|generate_data_space_eval|generate_toggle_configs", "F07"),
+    (r"research_log_2026-05-04", "F08"),
+    (r"speciesOT/hub/|(^|:)hub$|build_experiments_inventory|\.cursor/|(^|:)scripts/"
+     r"|:speciesOT/__init__\.py$", "F09"),
+    (r"cellot/cellot_gpu/", "vendored CellOT"),
+]
+
+
+def family_of(repo: str, path: str) -> str:
+    key = f"{repo}:{path}"
+    for pattern, family in FAMILY_RULES:
+        if re.search(pattern, key):
+            return family
+    return ""
 
 
 def git(repo: Path, *args: str) -> str:
@@ -140,6 +185,7 @@ def inventory(name: str, repo: Path, ref: str) -> list[dict[str, object]]:
             "last_date": commits[0][0] if commits else "",
             "last_author": commits[0][1] if commits else "",
             "n_commits": len(commits),
+            "family": family_of(name, path),
         }
         if kind == "notebook":
             row.update(notebook_facts(raw))
@@ -158,7 +204,7 @@ def mark_duplicates(rows: list[dict[str, object]]) -> None:
 
 
 COLUMNS = [
-    "repo", "ref", "path", "kind", "title", "first_date", "first_author",
+    "repo", "ref", "path", "kind", "family", "title", "first_date", "first_author",
     "last_date", "last_author", "n_commits", "size_bytes", "sha12",
     "identical_copies", "n_code_cells", "n_cells_with_output", "imports",
     "h5ad_refs",
@@ -191,7 +237,10 @@ def main() -> None:
         counts[(row["repo"], row["kind"])] += 1
     for (repo, kind), n in sorted(counts.items()):
         print(f"{repo:>12} {kind:<9} {n}")
-    print(f"wrote {len(rows)} rows to {args.out}")
+    unassigned = [f"{r['repo']}:{r['path']}" for r in rows if not r["family"]]
+    print(f"wrote {len(rows)} rows to {args.out}; {len(unassigned)} without a family")
+    for item in unassigned:
+        print(f"  no family: {item}")
 
 
 if __name__ == "__main__":
