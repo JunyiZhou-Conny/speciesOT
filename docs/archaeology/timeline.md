@@ -3,7 +3,8 @@
 The project in date order, so you can find "what were we doing in May?" quickly.
 Each entry links to the family page that has the evidence. Labels: [G] git,
 [D] research log or doc, [R] Slurm or result file, [N] saved notebook output.
-Citation prefixes are in [sources.md](sources.md).
+Citation prefixes are in [sources.md](sources.md). Dates are local time (US
+Eastern) unless a family page marks them UTC.
 
 Slurm accounting starts on 2026-03-30. Jobs submitted by Conny's account per
 month, deduplicated (almost all speciesOT until September): April 321, May
@@ -23,22 +24,24 @@ corresponding human cells?
   Sapiens bone marrow [G]. → [F01](experiments/F01-gw-feasibility-and-simulations.md)
 - **2025-07** Gromov-Wasserstein (GW) alignment of blood cells across pig,
   mouse and human. The commit messages call pig→human "successful", but that
-  rests on 7 hand-checked cells. Measured type-matching was at chance: 43.2% vs
-  45.6% with shuffled labels. Mouse→human pairs were "not correct"
+  rests on 7 hand-checked cells. In the notebook's last version (2025-09-30),
+  measured type matching was at chance: 43.2% vs 45.6% with shuffled labels.
+  Mouse→human pairs were "not correct"
   (`josh@c861dce`, `josh@393065f`) [G][D][N]. → F01
 - **2025-10** Atlas sampling. Within- vs between-species distances:
   "between-species OT not better than random yet" (`josh@7f16bb7`) [G].
-  PerturbOT (label-constrained OT) experiments E1–E4. E1's apparent gain at
-  ε ≈ 1e-8 came from failed (NaN) solver runs, out-of-sample cell types failed,
-  and T cells were not aligned [N][D].
+  Experiments E1–E4: E1, E3 and E4 use PerturbOT (label-constrained OT),
+  and E2 clusters donors by GW distance. E1's apparent gain at ε ≈ 1e-8 came
+  from failed (NaN) solver runs, out-of-sample cell types failed, and T cells
+  were not aligned [N][D].
   → F01, [F02](experiments/F02-perturbot.md)
 - **2026-01** Simulations E5–E8 to diagnose why GW fails. The main failure is
   "symmetry mismatch": whole populations get swapped. Seeded anchors removed
   the swaps in a handful of toy runs [N]. → F01
 - **2026-02** Real immune data again (E9–E14): informative dimensions,
   ontology matching, OTDD, CellTypist labels, and fused GW with one-to-one
-  orthologs: best at α = 0, i.e. with the GW part switched off, and with genes
-  chosen using the scored labels [N].
+  orthologs. On the lung set it was best at α = 0, i.e. with the GW part
+  switched off, and with genes chosen using the scored labels [N].
   → [F03](experiments/F03-labels-ontology-and-distances.md),
   [F04](experiments/F04-gene-priors-and-standard-ot.md)
 - **2026-02-25** Josh's last `main` commit before the `cellot` branch splits
@@ -60,12 +63,13 @@ human expression from mouse cells with scGen and CellOT.
   → [F06](experiments/F06-tcell-holdouts-speciesot-v1.md)
 - **2026-03-24 → 03-25** Analysis notebooks 00–06: scGen autoencoder,
   CellOT OOD evaluation, held-out T cells, and the first CD8-holdout
-  comparison of IMPACT-OR vs CellOT vs scGen (`josh@1db1592`) [G].
-  → [F06](experiments/F06-tcell-holdouts-speciesot-v1.md)
-- **2026-03-30** Iteration 2 (106k cells, BioMart orthologs) (log 03-30) [D].
-- **2026-04-05 → 04-06** `speciesot_cd4/cd8/tcell` runs [R]. → F06
-- **2026-04-08 → 04-09** An r-vs-r² mix-up is fixed and evaluation moves to
-  CellOT's `evaluate.py` (log 04-08) [D]. The toggle IID/OOD runs T1–T4 /
+  comparison of IMPACT-OR vs CellOT vs scGen (`josh@1db1592`) [G]. The
+  03-30 log calls this CD8 run "iteration 2" (106k cells, BioMart orthologs)
+  [D]. → [F06](experiments/F06-tcell-holdouts-speciesot-v1.md)
+- **2026-04-05 → 04-06** The `speciesot_cd4`, `speciesot_cd8_nothymo` and
+  `speciesot_tcell_subtypes` runs (Groups B–D) [R]. → F06
+- **2026-04-08 → 04-09** An r-vs-r² mix-up is fixed and evaluation is
+  standardized on CellOT's `evaluate.py` (log 04-08) [D]. The toggle IID/OOD runs T1–T4 /
   M1–M4 follow: 234 jobs, 113 of them failed [R].
   → [F07](experiments/F07-toggle-iid-ood-and-renorm.md)
 - **2026-04-10** Josh's E17: plain OT pairs only about 25% of cells correctly
@@ -74,7 +78,7 @@ human expression from mouse cells with scGen and CellOT.
   [G]. A preprocessing scale mismatch between mouse and human is found and the
   data are renormalised (log 04-20) [D]. → F06, F07
 - **2026-04-24 → 05-12** Highly-variable-gene (HVG) investigation and the
-  five-flavor HVG matrix: 80 runs, 349 jobs between 05-05 and 06-02 [R].
+  five-flavor HVG matrix: 80 run folders holding the logs of 297 jobs [R].
   → [F08](experiments/F08-hvg-flavor-matrix.md)
 - **2026-05-05 → 05-13** Josh starts the BCG application: mouse and human
   BCG stem-cell data (tb1, tb2) [G].
@@ -89,8 +93,8 @@ human expression from mouse cells with scGen and CellOT.
 - **2026-05-15** This repo starts from a fresh `git init` ("Tier 1 repository
   reorganization", `conny@c342331`) [G].
 - **2026-05-25 → 05-29** Ten "walkthrough cleanup" commits, then the `hub`
-  CLI from v0 to v1.1: run discovery, scorecard, specs and job generation
-  [G]. → [F09](experiments/F09-hub-and-metrics-infrastructure.md)
+  CLI from v0 to v1.1: run discovery, model cards, specs and job generation
+  [G]. The scorecard came later, on 06-11. → [F09](experiments/F09-hub-and-metrics-infrastructure.md)
 - **2026-05-26 → 06-02** Uncapped CD8 data. The M1 monocyte puzzle (R² up,
   MMD not), which leads to the MMD floor/ceiling framework [N].
   → [F10](experiments/F10-monocytes-floor-ceiling-and-v08.md)
@@ -98,8 +102,9 @@ human expression from mouse cells with scGen and CellOT.
   (`fasrc:BK/docs/model_cards/`) [R].
 - **2026-06-05** The v08 data cut (assay filter, species-stratified split) and
   the "frozen benchmark" runs [R]. → F10
-- **2026-06-09** Obsidian vault generated; decoded-frame metric adopted as the
-  headline (log 06-09, `conny@8a9a103`) [G][D]. → F09, F10
+- **2026-06-09** Obsidian vault generated (`conny@8a9a103`). The
+  decoded-frame metric script arrives (`conny@7c178c5`) and becomes the
+  headline (log 06-09) [G][D]. → F09, F10
 - **2026-06-12 → 06-22** Replication of the CellOT paper's cross-species LPS
   result. Of 72 jobs, 2 completed, 8 failed and 62 were cancelled [R]. On
   06-22, "found final results of Bunne paper" (`conny@3ccd3d5`) [G].
@@ -107,18 +112,21 @@ human expression from mouse cells with scGen and CellOT.
 
 ## Summer: scGen reproduction, autoresearch, and the autoencoder problem (2026-06-15 → 07-30)
 
-- **2026-06-19 → 06-22** The `scgen-cellot-ablation` repo. Stage 0
-  reproduces scGen's Fig. 5 with the original TensorFlow code; Stage 1 is the
-  2×2 grid of split × gene set using CellOT's autoencoder scGen [G][R].
+- **2026-06-15 → 06-22** The `scgen-cellot-ablation` work. Stage 0
+  reproduces scGen's Fig. 5 with the original TensorFlow code. Stage 1 is the
+  2×2 grid of split × gene set using CellOT's autoencoder scGen; its runs are
+  dated 06-17 [R]. The repo itself was created on 06-19 [G].
   → [F12](experiments/F12-scgen-fig5-stage0-and-stage1.md)
 - **2026-06-22 → 07-18** The autoresearch loop: 338 logged LPS experiments in 337 run
-  folders (390 jobs) [R]. On 06-23 there is an "autonomous session" while Conny was
-  away; on 06-25 a meeting with David. The last run finished on 07-18
-  ("DONE") [R][D]. Its journal concludes that the autoencoder hurts, and the
-  one CellOT-on-frozen-autoencoder run loses to a plain mean shift [R].
+  folders (390 jobs) [R]. On 06-23 there is an "autonomous session" while
+  Conny was away; slides for a meeting with David are dated 06-25. The last
+  run finished on 07-18 ("DONE") [R][D]. Its journal concludes that the
+  autoencoder hurts [D]. The one CellOT run on a frozen autoencoder (07-13)
+  loses to a mean shift on the same latent space [R].
   → [F13](experiments/F13-autoresearch-loop.md)
 - **2026-07-20** "Stop the infinite games": OT beating scGen on MMD was not
-  reproduced; return to the atlas (log 07-20) [D]. → F11, F13
+  reproduced (log 07-20) [D]. The plans of the next day return to the atlas.
+  → F11, F13
 - **2026-07-21** Four agent plans run in parallel:
   - A: atlas memory brief;
   - B: atlas scoreboard;
@@ -142,12 +150,14 @@ human expression from mouse cells with scGen and CellOT.
 ## Deployment and BCG (2026-08)
 
 - **2026-08-03** Specs for the uncapped v08 deployment models and the mixhvg
-  ablation; models made self-contained (baked shift and gene axis)
+  ablation, whose runs had been made on 07-30. Models are made
+  self-contained, with the shift and gene axis baked in
   (`conny@0b9c66e`, `conny@a2f89cc`) [G]. → F16
 - **2026-08-18** BCG prediction path on the v08 gene axis (notebooks
   16.2–16.4). The last speciesOT compute jobs run: the uncapped v08 models.
-  There is no atlas evaluation (`evals.csv`) for them [G][R]. Josh's tb3 makes the first predictions
-  through Conny's models [G]. → F16, F17
+  There is no atlas evaluation (`evals.csv`) for them, and they were never
+  used [G][R]. Josh's tb3 runs BCG cells through Conny's models: predictions
+  dated 08-05, saved outputs from an 08-18 re-run [G][R]. → F16, F17
 - **2026-08-19** Five-minute update to the PI: BCG predictions written, no
   human ground truth to score them against yet
   (`fasrc:BK/logs/research_logs/pi_5min_2026-08-19/`) [D]. → F17
@@ -164,8 +174,9 @@ human expression from mouse cells with scGen and CellOT.
 - **2026-09-07 → 09-08** OOP files in this repo, `pyproject.toml`, and
   `R2Evaluation` (`conny@cebd146`, `conny@7bb193e`, `conny@109bf12`) [G].
   The same day an AI agent opens and partly merges the PR stack #1–#10 on
-  this repo [G], and writes a 237-item package plan that was never executed
-  [D]. → F18
+  this repo [G]. The agent's 237-item plan has no ticked boxes, but its
+  "Landing status" section records seven landed commits. The stack is undone
+  the same evening by a force-push [G][D]. → F18
 - **2026-09-08 → 09-09** `R2Evaluation` reaches Josh's `src` (PR #1, merged
   09-09) [G]. → F18
 - **2026-09-17** An AI-built package repo, `speciesost-package`: ten PRs

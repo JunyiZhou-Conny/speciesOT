@@ -25,8 +25,11 @@ Written on 2026-10-20 for Conny and Josh. It adds files only under
   checked per page, about 425 corrections in total. Selected headline numbers
   were checked a third time by hand: the Stage 0/1 metrics, tb4's BCG table,
   and the CellOT authors' `species.csv`.
+- **Review of the summary pages.** The cross-cutting pages (this one, the critique, the reference
+  experiments, models, metrics, data, glossary, timeline, sources, open questions) were then checked
+  by another independent agent, about 1,100 claims in all. Its corrections are applied.
 - **Citations.** Every claim cites its source. [tools/check_refs.py](tools/check_refs.py)
-  confirms that all 1,587 distinct citations resolve: each file exists at the
+  confirms that all 1,591 distinct citations resolve: each file exists at the
   cited ref, commit or FASRC path, and each notebook cell or line is in range.
 - **Privacy.** Private AI-chat sessions (Codex, Cursor) were read only as
   leads, to find things to check. They are not quoted.
@@ -51,9 +54,9 @@ A number labelled [D] was not confirmed against a result file.
 
 1. **2024–2025, matching cells across species with GW.** Josh tried to pair
    mouse and human cells with Gromov-Wasserstein OT. Cross-species pairing was
-   at or below chance
+   at or below chance in most runs; two single runs were above it
    ([F01](experiments/F01-gw-feasibility-and-simulations.md)).
-2. **2025-10 → 2026-04, better matching methods.** PerturbOT, ontology
+2. **2025-10 → 2026-07, better matching methods.** PerturbOT, ontology
    matching, OTDD, CellTypist labels and ortholog-based fused GW. Each
    apparent success either used the labels being scored or came from a solver
    that had failed or not converged
@@ -62,7 +65,7 @@ A number labelled [D] was not confirmed against a result file.
    first on the CellOT paper's LPS data, then mouse → human on the Tabula
    atlas ([F05](experiments/F05-first-cellot-runs-on-lps.md),
    [F06](experiments/F06-tcell-holdouts-speciesot-v1.md)).
-4. **2026-04, first atlas comparisons.** "IMPACT" (CellOT in the scGen
+4. **2026-03 → 04, first atlas comparisons.** "IMPACT" (CellOT in the scGen
    autoencoder's latent space) matched human gene means best. But these runs
    had a mouse/human scale bug, leaky gene selection, mixed evaluation spaces
    and no do-nothing baseline
@@ -71,47 +74,70 @@ A number labelled [D] was not confirmed against a result file.
 5. **2026-05, gene selection and infrastructure.** A five-flavor HVG matrix
    ([F08](experiments/F08-hvg-flavor-matrix.md)) and the `hub` CLI
    ([F09](experiments/F09-hub-and-metrics-infrastructure.md)). Within a
-   flavor, IMPACT beat the scGen-style baseline in latent space mostly in the
-   IID setting. Most "gene space" IMPACT numbers were actually latent.
+   flavor, in latent space, IMPACT beat the scGen-style baseline on R² in 19 of
+   20 IID cases but only 11 of 20 OOD cases. On MMD it won 20 of 20 and 17 of
+   20. Most "gene space" IMPACT numbers were actually latent.
 6. **2026-06, honest metrics and the v08 benchmark.** The MMD floor/ceiling
    scale and the v08 data cut fixed real problems. On v08, IMPACT beats the
-   baseline on MMD and greatly improves gene means. As a whole distribution,
-   though, it is about as far from the real human cells as the unchanged
-   mouse cells are ([F10](experiments/F10-monocytes-floor-ceiling-and-v08.md)).
+   scGen-style baseline on MMD in every cut. Both models greatly improve gene
+   means over unchanged mouse cells (R² of means 0.92 and 0.93 vs 0.55 on M1).
+   As a whole distribution, though, IMPACT's output is about as far from the
+   real human cells as the unchanged mouse cells on M1 (MMD 0.104 vs 0.109),
+   and farther on M2 and CD8
+   ([F10](experiments/F10-monocytes-floor-ceiling-and-v08.md)).
 7. **2026-06, checking the papers.**
    - The CellOT paper's cross-species result did not reproduce for rat
      ([F11](experiments/F11-bunne-lps-replication.md)).
    - scGen's Fig. 5 did reproduce, but doing nothing already scores 0.867 of
-     its 0.907. The training split, not the choice of scGen, explains most of
-     the gap between the two papers
+     its 0.907. The training split, not the gene set, explains most of the
+     gap between the two papers. Whether paper scGen would also fail on the
+     hard split was never tested
      ([F12](experiments/F12-scgen-fig5-stage0-and-stage1.md)).
    - In the CellOT authors' own results file, doing nothing beats both models
-     on mean correlation.
-8. **2026-06 → 07, the autoencoder problem.** Hundreds of autoresearch runs
-   showed that a plain gene-space mean shift beats the autoencoder pipeline
+     on mean correlation. On MMD, CellOT beats doing nothing in all four
+     species, while their scGen loses to doing nothing in three of four.
+8. **2026-06 → 07, the autoencoder problem.** On the LPS data, hundreds of
+   autoresearch runs showed that a plain gene-space mean shift beats the
+   autoencoder pipeline on MMD
    ([F13](experiments/F13-autoresearch-loop.md)). Attempts to repair the
    autoencoder failed ([F15](experiments/F15-ae-repair-rounds-and-calibration.md)).
    A paper-style VAE on the atlas was not better
    ([F14](experiments/F14-july-plans-a-to-d.md)).
 9. **2026-05 → 08, deployment and BCG, the real target.** Models were trained
-   for new data but never validated
+   for new data. They were never scored on held-out atlas cells against a
+   floor, ceiling or identity baseline
    ([F16](experiments/F16-deployment-models-and-mixhvg.md)). On BCG, both
-   models' predictions fit worse than leaving the mouse-treated cells
-   unchanged, and no treatment map was ever built. Compute stopped on
-   2026-08-18 ([F17](experiments/F17-bcg-application.md)).
+   models' predictions fit the human-treated gene means worse than leaving
+   the mouse-treated cells unchanged, and no treatment map was ever built.
+   Compute stopped on 2026-08-18
+   ([F17](experiments/F17-bcg-application.md)).
 10. **2026-09 → now, the package.** Josh's skeleton, Conny's evaluation and
     scGen classes, and two AI-built versions that were never proposed to
-    Josh. No version runs end to end, and its metrics match none of the
-    research metrics ([F18](experiments/F18-oop-package.md)).
+    Josh. No version runs end to end. The package's R² equals only Stage 0's
+    reconstruction metric, and its MMD matches no earlier setting, so neither
+    reproduces any earlier prediction score
+    ([F18](experiments/F18-oop-package.md)).
 
 ## The bottom line
 
-- **Supported:** within one dataset and one autoencoder, CellOT ("IMPACT")
-  gives lower MMD than the scGen-style mean shift, and it improves gene means
-  over unchanged mouse cells.
-- **Not supported:** that any model in the project predicts human cells
-  better than a simple baseline (do nothing, or a plain gene-space mean shift)
-  on a fair test. That also holds for the BCG application.
+- **Supported:**
+  - On the atlas, within one dataset and one autoencoder, CellOT ("IMPACT")
+    gives lower MMD than the scGen-style mean shift
+    ([F08](experiments/F08-hvg-flavor-matrix.md),
+    [F10](experiments/F10-monocytes-floor-ceiling-and-v08.md),
+    [F14](experiments/F14-july-plans-a-to-d.md)).
+  - Both models improve gene means over unchanged mouse cells by a wide
+    margin.
+  - This did not carry over to the LPS data. In the rat replication and in
+    the one CellOT run on a frozen autoencoder, CellOT did worse than the
+    mean shift ([F11](experiments/F11-bunne-lps-replication.md),
+    [F13](experiments/F13-autoresearch-loop.md)).
+- **Not supported:**
+  - That any model brought the predicted *distribution* of cells closer to
+    the real human cells than unchanged mouse cells are.
+  - That any model predicted the BCG response better than doing nothing.
+  - A plain gene-space mean shift was tested only on LPS, where it beat the
+    autoencoder models. On the atlas it was never run.
 - **Main reasons:**
   - baselines were missing;
   - the 50-d autoencoder discards most cell-to-cell variation;

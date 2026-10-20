@@ -12,9 +12,10 @@ that was later fixed, scored with metrics that varied
 
 ## Before any test: what the package must be able to compute
 
-None of the numbers below can be matched with the package's current metrics.
-`R2Evaluation` correlates paired cells, and `MMDEvaluation` uses one
-bandwidth on full clouds ([metrics.md](metrics.md) §1–2,
+Most of the numbers below cannot be matched with the package's current
+metrics. The exceptions are R0.1, R4.4 and the R3 counts. `R2Evaluation`
+correlates paired cells, and `MMDEvaluation` uses one bandwidth on full
+clouds ([metrics.md](metrics.md) §1–2,
 [F18](experiments/F18-oop-package.md)). The tests need:
 
 - **R² of mean expression**: Pearson r between the mean vectors of two cell
@@ -32,8 +33,11 @@ bandwidth on full clouds ([metrics.md](metrics.md) §1–2,
   seeds.
 - **The pinned ortholog table**:
   `conny@c342331:scripts/.biomart_ortholog_cache.csv`, 14,451 one-to-one
-  pairs. It was removed from git on 2026-05-25 and exists nowhere else
-  ([F10](experiments/F10-monocytes-floor-ceiling-and-v08.md)).
+  pairs. It was removed from git on 2026-05-25. A four-column copy with the
+  same rows is
+  `fasrc:BK/cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/gene_lists/pre_hvg_one2one_orthologs.csv`
+  ([F10](experiments/F10-monocytes-floor-ceiling-and-v08.md),
+  [F17](experiments/F17-bcg-application.md)).
 
 Copy these inputs to a safe place first. They exist in only one location
 ([sources.md](sources.md)):
@@ -48,18 +52,18 @@ Copy these inputs to a safe place first. They exist in only one location
 | # | test | why first |
 |---|---|---|
 | 1 | [R1.1](#r11-bcg-do-nothing-baseline-e24-files) BCG do-nothing baseline | It uses exactly the files and the `IdentityModel` already in the package's test config. No model or training is needed. |
-| 2 | [R0.2](#tier-0-unit-tests-no-data) biased-MMD floor | Pins the MMD estimator before anything depends on it. |
+| 2 | [R0.2](#tier-0-unit-tests-synthetic-or-small-data) biased-MMD floor | Pins the MMD estimator before anything depends on it. |
 | 3 | [R1.2](#r12-lps-do-nothing-baselines) LPS do-nothing baselines | Pure arithmetic on one public file; it pins the R² definition. |
 | 4 | [R3.4](#tier-3-data-preparation-and-splits-exact-counts) split counts | Pins `TrainingData`'s split against the hub's `toggle_ood`. |
 | 5 | [R2.1](#r21-decoded-frame-scorer-m1-v08-impact) decoded-frame scorer | Reproduces the project's headline metric from saved files. |
 
-## Tier 0: unit tests (no data)
+## Tier 0: unit tests (synthetic or small data)
 
 | id | test | expected | source |
 |---|---|---|---|
 | R0.1 | MMD of a cloud with itself | exactly 0 | existing test `josh@0ba4158:src/speciesot/Tests/test_evaluation.py:14-22` |
 | R0.2 | MMD between two disjoint halves of one cloud | positive, ≈ (2/n)(1 − mean kernel). Real reference, M2 v07 human cells, seed 0: 0.063726 / 0.038505 / 0.023722 at n = 30 / 50 / 80 | [F10](experiments/F10-monocytes-floor-ceiling-and-v08.md) test 2 (`fasrc:BK/cellot/cellot_gpu/results/hvg_pearson_residuals_m2_ood/impact_cellot/evals_ood_data_space/mmd_floor.csv`) |
-| R0.3 | a full-rank PCA mean shift equals the gene-space mean shift | 0.2291176 vs 0.2291181 (rtol 1e-7) at 2,000 genes | [F13](experiments/F13-autoresearch-loop.md) test 3 |
+| R0.3 | a full-rank PCA mean shift equals the gene-space mean shift | the two prediction matrices agree within rtol 1e-7 / atol 1e-8 (`autoresearch:ae_study/linear_baselines.py:118-126`). Their raw fgc values then agree to about 5e-7: 0.2291176 vs 0.2291181 at 2,000 genes | [F13](experiments/F13-autoresearch-loop.md) test 3 |
 | R0.4 | if a paired-cell metric is kept, it refuses unequal cell counts, swapped axes and sparse input | raises an error | [F18](experiments/F18-oop-package.md) test 2 (`ai_package@src:tests/test_r2_fail_closed.py`) |
 
 ## Tier 1: do-nothing baselines (real data, no model)
@@ -204,8 +208,9 @@ seeds and test their mean.
 ## Not worth reproducing
 
 - Josh's OT pairing experiments as numbers. They are single unseeded runs,
-  some with failed solvers. Keep the synthetic GW swap test and the
-  convergence guard only if the package adds a pairing module
+  some with failed solvers. If the package adds a pairing module, keep the
+  synthetic GW swap test, the convergence guard, and the e14 ortholog-OT
+  result (0.9014, which reproduced exactly across two sessions)
   ([F01](experiments/F01-gw-feasibility-and-simulations.md)–[F04](experiments/F04-gene-priors-and-standard-ot.md)).
 - The speciesot_v1 and toggle retrains, which ran on stale data with leakage
   ([F06](experiments/F06-tcell-holdouts-speciesot-v1.md),

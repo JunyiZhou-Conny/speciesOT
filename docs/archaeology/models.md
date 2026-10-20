@@ -14,15 +14,17 @@ log. Citation prefixes are in [sources.md](sources.md).
 - **Is CellOT's "scGen" the scGen of the scGen paper?** No.
   - **Paper scGen** is a variational autoencoder (VAE). The authors trained it
     with a very small KL weight (α = 5e-5), a 100-d latent, two layers of 800
-    units with batch normalization and dropout 0.2, for 300 epochs. Its shift δ
-    is computed after balancing cell types [P][C].
+    units with batch normalization and dropout 0.2, for 300 epochs [C]. The paper
+    computes δ after balancing cell types [P]. In the cross-species Fig. 5 run,
+    each δ is a single-species mean over equal-size subsets, with no
+    cell-type balancing [C].
   - **CellOT's "scgen"** is a plain (deterministic) autoencoder with no KL term.
     It has a 50-d latent and two layers of 512 units (256 in most hub runs), and
     its δ is a plain difference of means [C].
   - The CellOT authors say the VAE part barely matters because the KL weight is
     tiny in practice [P]. The authors' own α = 5e-5 supports that. But width,
-    latent size, normalization, dropout, training length and the δ balancing
-    all differ as well.
+    latent size, normalization, dropout and training length all differ as
+    well.
 - **Does the difference matter here?** On the scGen-paper split with 6,619
   genes, the two reach similar mean-expression R²:
   - paper scGen (TensorFlow): r2_all 0.907, against 0.910 reported in the
@@ -30,10 +32,12 @@ log. Citation prefixes are in [sources.md](sources.md).
   - CellOT's autoencoder scGen (arm A): 0.897
     (`fasrc:BK/scgen-cellot-ablation/results/stage1/ablation_grid.csv`) [R].
 
-  The big drop comes from the split. On CellOT's out-of-distribution split
-  (arm C), CellOT's scGen falls to 0.654, because rat cells are then fully
-  absent from training. The split matters more than the model choice
-  ([F12](experiments/F12-scgen-fig5-stage0-and-stage1.md)).
+  On the genes that respond to LPS, the autoencoder is weaker: top-100 DEG R²
+  0.642 vs 0.694–0.742 for two VAE trainings. On CellOT's out-of-distribution
+  split (arm C), CellOT's scGen falls to 0.654, because rat cells are then
+  fully absent from training. Paper scGen was never run on that split, so
+  whether the model choice matters there is unknown. This is the missing cell
+  of the comparison ([F12](experiments/F12-scgen-fig5-stage0-and-stage1.md)).
 - **R² hides a distribution problem.** Paper scGen's prediction gets the mean
   right: 0.907, against 0.867 for doing nothing. But its MMD to the real LPS
   rat cells is 0.201, while the unstimulated rat cells themselves are only
@@ -44,15 +48,15 @@ log. Citation prefixes are in [sources.md](sources.md).
 
 | name used in the repo | what it actually is | implementation | used in |
 |---|---|---|---|
-| identity, "do nothing", `r2_identity`, ceiling | predict that the target looks like the source | — | every family, as the baseline |
-| scGen (paper) | VAE + latent mean shift, TensorFlow 1 `VAEArith` | theislab code at `fasrc:BK/scgen-cellot-ablation/scgen-reproducibility/code/scgen/models/_vae.py`; env `scgen_tf1` | Stage 0 ([F12](experiments/F12-scgen-fig5-stage0-and-stage1.md)) |
+| identity, "do nothing", `r2_identity`, ceiling | predict that the target looks like the source | — | used as a baseline from June on ([F10](experiments/F10-monocytes-floor-ceiling-and-v08.md)–[F17](experiments/F17-bcg-application.md)), and in Stage 0. Missing in F05–F08 and in the Stage 1 grid ([critique.md](critique.md) §1) |
+| scGen (paper) | VAE + latent mean shift, TensorFlow 1 `VAEArith` | theislab code at `fasrc:BK/scgen-cellot-ablation/scgen-reproducibility/code/scgen/models/_vae.py`; env `scgen_tf1` | Stage 0 and the late-July repair study ([F12](experiments/F12-scgen-fig5-stage0-and-stage1.md), [F15](experiments/F15-ae-repair-rounds-and-calibration.md)) |
 | atlas paper-VAE, "Plan C" | the same `VAEArith` with paper settings, trained on the atlas cuts | `conny:atlas-paper-vae/` | [F14](experiments/F14-july-plans-a-to-d.md) |
-| `scgen` 2.x, `SCGEN` | the maintained scvi-tools (PyTorch) rewrite of scGen | pip `scgen` (2.1.1 in env `analysis`) | the AI-built package ([F18](experiments/F18-oop-package.md)); pinned in Josh's `requirements.txt` |
+| `scgen` 2.x, `SCGEN` | the maintained scvi-tools (PyTorch) rewrite of scGen | pip `scgen` (2.1.1 in env `analysis`) | the AI-built package ([F18](experiments/F18-oop-package.md)); pinned in `requirements.txt` on branch `scgen-model-impl` (added in `josh@3eb6555`); no experiment used it |
 | hub "scgen", Stage 1 arms, autoresearch base | CellOT's deterministic `AutoEncoder` + latent mean shift | `conny:cellot/cellot_gpu/cellot/models/ae.py:90-188`, `transport.py:61-70` | [F05](experiments/F05-first-cellot-runs-on-lps.md)–[F16](experiments/F16-deployment-models-and-mixhvg.md), [F17](experiments/F17-bcg-application.md) |
 | `scGenModel` (package) | a stub that calls the TensorFlow 1 `VAEArith` API, while the pinned library has only `SCGEN` | `josh@scgen-model-impl:src/speciesot/speciesot_core.py` | [F18](experiments/F18-oop-package.md) |
 | CellOT | input-convex neural network (ICNN) optimal transport map | `conny:cellot/cellot_gpu/cellot/models/cellot.py`, `transport.py:54` | see the framings below |
-| IMPACT_CellOT, IMPACT-OR, `impact_cellot` | CellOT trained mouse → human inside a frozen scGen autoencoder's latent space; predictions are decoded. What "IMPACT" stands for is not recorded. | hub configs with `data.ae_emb` | [F06](experiments/F06-tcell-holdouts-speciesot-v1.md)–[F17](experiments/F17-bcg-application.md) |
-| cell-type CellOT, `swapped_cellot` (in speciesot_v1) | CellOT from non-CD8 to CD8 cells | — | [F06](experiments/F06-tcell-holdouts-speciesot-v1.md), [F07](experiments/F07-toggle-iid-ood-and-renorm.md); abandoned |
+| IMPACT_CellOT, IMPACT-OR, `impact_cellot`, `impact_or`, `swapped_cellot` (renorm runs) | CellOT trained mouse → human inside a frozen scGen autoencoder's latent space; predictions are decoded. What "IMPACT" stands for is not recorded. | hub configs with `data.ae_emb` | [F06](experiments/F06-tcell-holdouts-speciesot-v1.md)–[F17](experiments/F17-bcg-application.md) |
+| cell-type CellOT; folders `cellot/` and `speciesot_cellot_swapped/` (speciesot_v1), `cellot/` (toggle), `normal_cellot/` (renorm) | CellOT from non-held-out to held-out cell types (T cells; monocytes in the toggle runs) | — | [F06](experiments/F06-tcell-holdouts-speciesot-v1.md), [F07](experiments/F07-toggle-iid-ood-and-renorm.md); abandoned |
 | `raw_shift` | add the mean difference in gene space; no autoencoder | autoresearch | [F13](experiments/F13-autoresearch-loop.md) |
 | Gaussian / Bures OT | linear OT map between Gaussians fitted to each cloud | autoresearch | [F13](experiments/F13-autoresearch-loop.md) |
 | unbalanced OT "Option A" | reweight cells, then a balanced ICNN | `conny:scgen-cellot-unbalanced/` | [F14](experiments/F14-july-plans-a-to-d.md); real run lost |
@@ -70,14 +74,20 @@ log. Citation prefixes are in [sources.md](sources.md).
 | latent size | 100 | 100 | 50 | 50 |
 | dropout | 0.2 | 0.2 | 0 | 0.1 |
 | training | 300 epochs, batch 32, Adam lr 1e-3 | — | 250k iterations; batch from the task config (256 for `crossspecies`) | 50k iterations, batch 256, Adam lr 1e-3 |
-| δ (the shift) | mean latent difference after up-sampling cell types and down-sampling the larger condition | balanced the same way (`predict()` calls `balancer`) | plain mean of codes per label (`compute_scgen_shift`, `ae.py:175-188`) | same |
+| δ (the shift) | in the paper's method, mean latent difference after up-sampling cell types and down-sampling the larger condition [P]. In the cross-species Fig. 5 run, single-species means over equal-size subsets, with no cell-type balancing (`fasrc:BK/scgen-cellot-ablation/scripts/04_stage0_fig5_eval.py:174-185`) [C] | balanced as in the paper (`predict()` calls `balancer`) | plain mean of codes per label (`compute_scgen_shift`, `ae.py:175-188`) | same |
 | cross-species prediction | ½(z_mouse,LPS + δ_species + z_rat,ctrl + δ_LPS), the Fig. 5 "two paths" | — | decode(encode(x) + δ) | decode(encode(x) + δ) |
 | source | `fasrc:BK/scgen-cellot-ablation/scripts/run_stage0.sh:27-31`; `…/scgen-reproducibility/code/scgen/models/_vae.py:45-170`; Lotfollahi 2019 [P][C] | `fasrc:/n/home01/jzhou1125/miniforge3/envs/analysis/lib/python3.12/site-packages/scgen/_scgen.py:49-55`, `_scgenvae.py:36-130` [C] | `conny:cellot/cellot_gpu/configs/models/scgen.yaml` [C] | `fasrc:BK/cellot/cellot_gpu/results/hvg_pearson_residuals_m1_v08_ood/scgen/config.yaml` [C] |
 
 Notes:
 
-- The hub's settings changed between families (width, dropout, iterations).
-  Each family page records the configs it used.
+- Most hub families used the same settings: autoencoder 2 × 256, dropout 0.1,
+  50k iterations; CellOT 4 × 64, 50k iterations, batch 128. The exceptions
+  are `speciesot_cpu`, the March LPS runs ([F05](experiments/F05-first-cellot-runs-on-lps.md))
+  and the paper replication ([F11](experiments/F11-bunne-lps-replication.md)).
+  Each family page records its configs.
+- The hub computes the shift δ after the last training step with the model
+  still in training mode, so dropout is active when δ is computed
+  ([F18](experiments/F18-oop-package.md)).
 - In the original TensorFlow code, the decoder's second batch-normalization
   call computes a value that is never used (`_vae.py:114`) [C]. This only
   matters if someone re-implements scGen line by line.
@@ -93,9 +103,9 @@ Notes:
 | network | ICNN, 4 hidden layers × 64 | 4 × 64 | 4 × 64 | as the paper |
 | optimizer | Adam, lr 1e-4, β₁ = 0.5, β₂ = 0.9 | same | same | same |
 | inner loop | f fixed, 10 g-updates per step; λ = 1 | `n_inner_iters: 10`, `fnorm_penalty: 1` | same | same as upstream |
-| iterations | 250k ("all models") | **100k** | **50k** | 250k |
+| iterations | 250k ("all models") | **100k** | **50k** | 250k planned; the rat autoencoder was cancelled at step 229,762 ([F11](experiments/F11-bunne-lps-replication.md)) |
 | batch | 256 | set by the task config: 256 (`crossspecies.yaml`), 128 (`crossspecies-ood.yaml`) | 128 | 256 |
-| space | 50-d latent of the scGen encoder | — | 50-d latent of the hub scGen | — |
+| space | 50-d latent of the scGen encoder | — | 50-d latent of the hub scGen | 50-d latent of its own autoencoder |
 | source | Bunne 2023 Methods [P] | `conny:cellot/cellot_gpu/configs/models/cellot.yaml:4-23` [C] | `fasrc:BK/cellot/cellot_gpu/results/hvg_pearson_residuals_m1_v08_ood/impact_cellot/config.yaml` [C] | `conny:cellot/cellot_gpu/paper_crossspecies/specs/rat_ood.yaml:12-13`, `scripts/setup.py:62-111` [C] |
 
 Across the hub results tree, 58 of 60 `impact_cellot` configs and 78 of 80
@@ -105,7 +115,7 @@ counted on 2026-10-20) [C]. The remaining two of each are the replication of
 the paper's own cross-species task, which used the paper settings
 ([F11](experiments/F11-bunne-lps-replication.md)).
 
-### What gets transported where ("framings")
+### What gets transported where ("framings"; three of the four were run)
 
 | framing | source → target | used in |
 |---|---|---|
@@ -114,9 +124,9 @@ the paper's own cross-species task, which used the paper settings
 | cell-type | non-CD8 → CD8 T cells | [F06](experiments/F06-tcell-holdouts-speciesot-v1.md), [F07](experiments/F07-toggle-iid-ood-and-renorm.md); abandoned |
 | IMPACT (species) | mouse → human cells of the same cell types, with some cell types held out | [F06](experiments/F06-tcell-holdouts-speciesot-v1.md) onward; the main line |
 
-The project's end goal composes a species map with a treatment map: mouse
-untreated → mouse treated → human treated. Only the species leg was ever
-built ([F17](experiments/F17-bcg-application.md);
+The project's end goal combines a species map with a treatment map, for
+example mouse untreated → mouse treated → human treated. The four-corner note
+lists other routes too. Only the species leg was ever built ([F17](experiments/F17-bcg-application.md);
 `conny:docs/concepts/the four-corner goal.md` [D]).
 
 ## Reuse map for the package
@@ -127,7 +137,7 @@ Options, not decisions:
 |---|---|---|
 | identity | none needed | — |
 | paper scGen (VAE) | pip `scgen` 2.x (`SCGEN`) | Not byte-for-byte the TensorFlow model. Paper numbers were reproduced only with the TensorFlow code, in a separate Python 3.7 / TensorFlow 1.15 env. |
-| CellOT "scgen" (AE) and CellOT / IMPACT | the vendored `conny:cellot/cellot_gpu/cellot/` | Not pip-installable here; it is used via `PYTHONPATH`. It needs torch and the `ml_collections`-style configs. Every hub result was made with it. |
+| CellOT "scgen" (AE) and CellOT / IMPACT | the vendored `conny:cellot/cellot_gpu/cellot/` | It has a `setup.py`, but the CellOT env's editable install points to a stale path, so it is used via `PYTHONPATH`. It needs torch and the `ml_collections`-style configs. Every hub result was made with it. |
 | raw mean shift, Gaussian OT | a few lines of numpy, or POT (`ot`) | — |
 | GW-family matching | POT, ott-jax (PerturbOT) | PerturbOT needed jax < 0.6 ([F02](experiments/F02-perturbot.md)) |
 

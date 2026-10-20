@@ -39,7 +39,7 @@ reconstruction-style rows, which are marked.
 | `r2-means` in `evals.csv` | `conny:cellot/cellot_gpu/scripts/evaluate.py:73` [C] | `pd.Series.corr(μ(treated), μ(imputed))` | **no: it is r, despite the name** |
 | hub R² | `conny:speciesOT/hub/readers.py:45`, `:86-88` [C] | squares the `r2-*` rows of `evals.csv`; the headline is taken at the largest `ncells` with `nfeatures = all`, averaged over reps | yes |
 | `r2_all` (autoresearch) | `autoresearch:run_one_experiment.py:271-272` [C] | Pearson r of μ over all genes, squared | yes |
-| `r_50` (autoresearch) | `autoresearch:run_one_experiment.py:281-292` [C] | Pearson r of μ over the top-50 DEGs. DEGs come from a Wilcoxon test, LPS6 vs unstimulated, on rat cells. | **no** |
+| `r_50` (autoresearch) | `autoresearch:run_one_experiment.py:274-292` [C] | Pearson r of μ over the top-50 DEGs. DEGs come from ranks stored in the data file, computed on all pooled cells (`ablation:scripts/02_prepare_data.py:32-42`). A rat-only Wilcoxon test (LPS6 vs unstimulated) is the fallback, used for the 6,619-gene arms. | **no** |
 | `r2_model_dec` | `conny:cellot/cellot_gpu/scripts/decoded_frame_metrics.py:136` [C] | corr²(μ(imputed), μ(decode(encode(treated)))) | yes. Note: the reference is the autoencoder's *reconstruction* of the target, not the target itself. |
 | `r2_identity_dec`, `r2_self_dec` | same file `:134-135` [C] | the same quantity for decoded control vs decoded treated, and for two random halves of decoded treated | yes |
 | per-gene paired Pearson², COD (reconstruction) | `fasrc:BK/scgen-cellot-ablation/scripts/stage0_metric_helpers.py:42-66` [C] | per gene, across **paired** cells (a cell and its own reconstruction); COD = 1 − SS_res/SS_tot | per cell pair, not per gene mean |
@@ -52,7 +52,8 @@ Things to know when reading these numbers:
   r-vs-r² mix-up once made a model look better than it was (research log
   2026-04-08 [D]; see [F06](experiments/F06-tcell-holdouts-speciesot-v1.md)).
 - **Correlation of means is high even for "do nothing".** On the LPS task,
-  leaving control cells unchanged already scores about 0.87; on BCG, human
+  leaving control cells unchanged already scores about 0.87 on all 6,619
+  genes (0.66 on 1,000 HVGs); on BCG, human
   untreated vs human treated scores 0.97 (see
   [F12](experiments/F12-scgen-fig5-stage0-and-stage1.md) and
   [F17](experiments/F17-bcg-application.md)). An R² is only meaningful next to
@@ -96,22 +97,23 @@ Consequences:
 
 | setting | variants found |
 |---|---|
-| bandwidth γ | average over 50 values `np.logspace(1, -3, 50)`, i.e. γ from 10 down to 0.001 (`evaluate.py:63`, all floor/ceiling scripts) · six values `[2, 1, 0.5, 0.1, 0.01, 0.005]` (`compute_scalar_mmd`, `mmd.py:114-116`) · a single γ = 0.1 (the package's `MMDEvaluation`, `josh@scgen-model-impl:src/speciesot/speciesot_core.py:320-335`) [C] |
-| sample size | `evaluate.py` default n_cells 100, 250, 500, 1000, 1500 with 10 reps (`evaluate.py:20-23`) [C]. Hub job scripts passed different lists to different runs, even inside one experiment matrix: `30,50,80` (66 job scripts), `30,80,200,300` (46), `20,30,40` (34), `30,40,80` (16), `10,20,30` (8), `50,80` (4), `25,50,80` (2) (counted over `fasrc:BK/sbatch/`) [C]. Some notebooks used the full cloud with no subsampling ([F07](experiments/F07-toggle-iid-ood-and-renorm.md)). |
-| genes | the CellOT paper uses the top-50 marker genes [P]; `evaluate.py` uses all features, but only when there are at most 1000 (`:78`), plus marker subsets when `--n_markers` is given [C] |
+| bandwidth γ | average over 50 values `np.logspace(1, -3, 50)`, i.e. γ from 10 down to 0.001 (`evaluate.py:63`, all floor/ceiling scripts) · 50 values `np.logspace(-3, 3, 50)` in notebook 06, which produced the F06 MMDs (`conny:speciesOT/baseline/analysis/06_cd8_holdout_evaluation.ipynb#c9`) · six values `[2, 1, 0.5, 0.1, 0.01, 0.005]` (`compute_scalar_mmd`, `mmd.py:114-116`) · a single γ = 0.1 (the package's `MMDEvaluation`, `josh@scgen-model-impl:src/speciesot/speciesot_core.py:320-335`) [C] |
+| sample size | `evaluate.py` default n_cells 100, 250, 500, 1000, 1500 with 10 reps (`evaluate.py:20-23`) [C]. Job scripts (some written before the hub existed) passed different lists to different runs, even inside one experiment matrix: `30,50,80` (66 job scripts), `30,80,200,300` (46), `20,30,40` (34), `30,40,80` (16), `10,20,30` (8), `50,80` (4), `25,50,80` (2) (counted over `fasrc:BK/sbatch/`) [C]. Some notebooks used the full cloud with no subsampling ([F07](experiments/F07-toggle-iid-ood-and-renorm.md)). The `evals.csv` draws are not seeded. |
+| genes | the CellOT paper uses the top-50 marker genes [P]. `evaluate.py` uses all features, but only when there are at most 1000 (`:78`). `--n_markers` instead sets the list of gene sets to score: marker counts, optionally with `all` [C] |
 | frame | raw genes, latent (50-d), or decoded |
 
-Example of why this matters: in the five-flavor HVG matrix of 2026-05-05, the
-`seurat_v3_paper` runs were evaluated at n up to 300, while the
-`pearson_residuals` runs stopped at n = 80. The hub reports MMD "at the
-largest ncells" (`readers.py:86-88`). So its headline MMDs are not comparable
-across flavors. Comparisons between models *within* one flavor used the same
-n and are fine ([F08](experiments/F08-hvg-flavor-matrix.md)).
+Example of why this matters: in the five-flavor HVG matrix of May 2026, the
+largest n depends on the holdout group: 80 for group a, 300 for b and c, 40
+for d. All five flavors share it within a group. The hub reports MMD "at the
+largest ncells" (`readers.py:86-88`), so its headline MMDs are not comparable
+across groups. Comparisons between models or flavors *within* one group used
+the same n ([F08](experiments/F08-hvg-flavor-matrix.md)).
 
 ## 3. Floor, ceiling and `frac_gap_closed`
 
-These were added in this repo on 2026-06-09 (`conny@8a9a103`) to make MMD
-interpretable. The idea: compare a model's MMD to the best value it could
+These were added in this repo on 2026-06-09 to make MMD interpretable: the
+floor/ceiling helpers and `extended_metrics.py` in `conny@8a9a103`, and
+`decoded_frame_metrics.py` in `conny@7c178c5`. The idea: compare a model's MMD to the best value it could
 possibly get (the *floor*) and to what doing nothing gets (the *ceiling*).
 
 ```
@@ -124,13 +126,14 @@ means worse than doing nothing.
 
 | variant | model | floor | ceiling | code |
 |---|---|---|---|---|
-| raw (`frac_gap_closed`) | MMD(imputed, treated) | MMD between two random halves of treated | MMD(control, treated) | `conny:cellot/cellot_gpu/scripts/extended_metrics.py:4-10, 136, 175` [C] |
+| raw (`frac_gap_closed`) | MMD(imputed, treated) | MMD between two disjoint random draws of n treated cells | MMD(control, treated) | `conny:cellot/cellot_gpu/scripts/extended_metrics.py:4-10, 136, 175` [C] |
 | decoded (`frac_gap_closed_decoded`) | MMD(imputed, treated) | MMD(decode(encode(treated)), treated) | MMD(decode(encode(control)), treated) | `conny:cellot/cellot_gpu/scripts/decoded_frame_metrics.py:8-17, 129-145` [C] |
 | latent (`frac_gap_closed_latent`) | the same, in the 50-d code | | | `autoresearch:honest_metrics.py:340` [C] |
 | R² analogue (`frac_r2_closed_decoded`) | r2_model_dec | r2_self_dec | r2_identity_dec | `decoded_frame_metrics.py:137-138` [C] |
 
-All of these use `compute_mmd_two_sample` with the same 50 bandwidths, with n
-per rep from the eval (usually 30, 50, 80) and 10 reps (`mmd.py:13-91`) [C].
+All of these use `compute_mmd_two_sample` with the same 50 bandwidths, n
+usually 30, 50 and 80, and 10 reps (`mmd.py:13-91`) [C]. The latent variant and
+the sidecar scripts set n themselves; it is not always the eval's n.
 
 Why there are two main variants:
 
@@ -149,7 +152,7 @@ Known problems with these scores (details and evidence in
 - The decoded score is relative to *this autoencoder*. Two models with
   different autoencoders have different floors, so their decoded scores are not
   directly comparable. The repo's own `conceptual_framework.md` §5.9 says so
-  [D], while `AGENTS.md` ranks all models on it.
+  [D], while `AGENTS.md` tells agents to rank models on it.
 - It can exceed 1: the model's output can sit closer to the target than the
   autoencoder's reconstruction of the target does. The top scorecard entry is
   1.032 ([F16](experiments/F16-deployment-models-and-mixhvg.md)).
@@ -157,8 +160,10 @@ Known problems with these scores (details and evidence in
   denominator was about 0.02, against about 0.22 on the atlas [D].
 - `r2_model_dec` rewards matching the autoencoder's reconstruction of the
   target, including its errors, not the target itself.
-- Always report model, floor and ceiling next to the fraction. The repo's own
-  rule from June onward is to also quote model/floor (`model_over_floor`) [D].
+- Always report model, floor and ceiling next to the fraction. From late July
+  the repo's own rule is to also quote model/floor (`model_over_floor`).
+  `conceptual_framework.md` added it on 2026-07-27, committed in
+  `conny@fe856aa` [D].
 
 ## 4. Other metrics that appear
 
@@ -167,10 +172,10 @@ Known problems with these scores (details and evidence in
 | `mean_js` | per-gene Jensen–Shannon divergence between the treated and imputed marginal distributions (histograms, 50 bins), averaged over genes | `conny:cellot/cellot_gpu/cellot/losses/divergence.py:29` [C] |
 | `l2-means`, `l2-stds` | Euclidean distance between mean vectors, or between per-gene standard-deviation vectors | `evaluate.py` [C] |
 | `r2-stds`, `r2-pairwise_feat_corrs` | correlation of per-gene standard deviations; correlation of gene–gene correlation matrices (both unsquared) | `evaluate.py` [C] |
-| `enrichment-k50`, `-k100` | kNN enrichment of predicted cells among real treated cells | `evaluate.py` [C] |
+| `enrichment-k50`, `-k100` | share of a predicted cell's 50 or 100 nearest neighbours that are also predicted cells. 0.5 means well mixed with the real cells; 1.0 means fully separate, so higher is worse | `evaluate.py` [C] |
 | AE identity panel | MSE, paired-cell Pearson² per gene, COD per gene, mean-vector Pearson², per-cell Pearson r | `conny:cellot/cellot_gpu/scripts/ae_identity_metrics.py`; `stage0_metric_helpers.py` [C] |
 | cell-pairing accuracy | share of cells whose OT partner (argmax of the transport plan) has the same cell-type label | Josh's notebooks ([F01](experiments/F01-gw-feasibility-and-simulations.md)–[F04](experiments/F04-gene-priors-and-standard-ot.md)) |
-| kBET, kNN purity | batch-mixing scores for batch correction | `josh@main:e22_batch_correction.ipynb` ([F17](experiments/F17-bcg-application.md)) |
+| kBET, kNN purity | kBET scores batch mixing; kNN purity scores how well cell labels are kept. Both were used to judge batch correction | `josh@main:e22_batch_correction.ipynb` ([F17](experiments/F17-bcg-application.md)) |
 
 ## 5. What this means for the package
 

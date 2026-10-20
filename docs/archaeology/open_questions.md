@@ -24,8 +24,8 @@ Conny's approval first.
   - the April toggle results ([F07](experiments/F07-toggle-iid-ood-and-renorm.md));
   - the July Plan A and B deliverables ([F14](experiments/F14-july-plans-a-to-d.md));
   - the late-July autoencoder study ([F15](experiments/F15-ae-repair-rounds-and-calibration.md)).
-- **What was said at the 2026-06-25 meeting with David?** There are slides
-  but no notes ([F13](experiments/F13-autoresearch-loop.md)).
+- **What was said at the meeting with David?** Its slides are dated
+  2026-06-25; there are no notes ([F13](experiments/F13-autoresearch-loop.md)).
 - **Did the CellOT authors answer the e-mail about their data and
   `species.csv`?** ([F11](experiments/F11-bunne-lps-replication.md)).
 - **Which human BCG capture is day 0 and which is day 90, and what does "two
@@ -37,8 +37,8 @@ Conny's approval first.
 
 ## 2. Cheap checks on saved files (CPU only, no training)
 
-All inputs exist in the FASRC backup or in this repo. Each check would close a
-gap named on a family page.
+The inputs exist in the FASRC backup, in Josh's FASRC folder or in this repo.
+Each check would close a gap named on a family page.
 
 1. **Identity baseline for the March CD8 holdout.** Unchanged mouse CD8 cells
    vs human CD8 cells, with the same metrics as IMPACT-OR's 0.72. The inputs
@@ -91,7 +91,7 @@ gap named on a family page.
 ## 4. Repository housekeeping (decisions; none done here)
 
 - **Commit the code that exists in one place only.** The late-July ablation
-  scripts and the uncommitted autoresearch files on FASRC
+  scripts on FASRC, and autoresearch's `adaptations.yaml`
   ([sources.md](sources.md#at-risk)).
 - **Back up inputs that are outside the backup.** Josh's
   `fasrc:JOSH/tb/data/`, the Stage 1 predictions on the Mac, and the Cursor
@@ -115,6 +115,7 @@ gap named on a family page.
 - **Retire `scripts/build_experiments_inventory.py`.** It points into the
   deleted FASRC working tree; `docs/archaeology/inventory.csv` and `./hub
   export` replace it ([F09](experiments/F09-hub-and-metrics-infrastructure.md)).
-- **Pin the ortholog table.**
-  `conny@c342331:scripts/.biomart_ortholog_cache.csv` is the only copy
+- **Pin the ortholog table.** Two copies survive:
+  `conny@c342331:scripts/.biomart_ortholog_cache.csv` in git history, and a
+  four-column copy in the backup's datasets folder. No code pins either one
   ([data.md](data.md)).

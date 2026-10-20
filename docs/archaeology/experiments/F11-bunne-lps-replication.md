@@ -127,7 +127,7 @@ Next to `species.csv` (o.o.d.; SPC values are mean ± SD of its 10 rows) [R, SPC
 | holdout | model | r ours | r SPC | MMD ours | MMD SPC |
 |---|---|---|---|---|---|
 | rat | CellOT | 0.636 | 0.677 ± 0.002 | 0.273 | 0.234 ± 0.006 |
-| rat | scGen | 0.666 | 0.694 ± 0.003 | 0.256 | 0.265 ± 0.004 |
+| rat | scGen | 0.666 | 0.693 ± 0.003 | 0.256 | 0.265 ± 0.004 |
 | rat | cAE | — | 0.638 ± 0.003 | — | 0.363 ± 0.004 |
 | rat | identity | 0.763 † | 0.798 ± 0.005 | 0.291 ‡ | 0.253 ± 0.004 |
 | rat | observed | 0.9999 † | 0.998 | 0.0014 ‡ | 0.0061 |

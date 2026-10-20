@@ -1,6 +1,6 @@
 # Data: datasets, preprocessing versions, and where they live
 
-Every experiment used one of three data families: the mouse/human cell atlas,
+Every experiment used one of three main data families: the mouse/human cell atlas,
 the cross-species LPS data, or the BCG data. Each went through several
 preprocessing versions, and the version matters as much as the model. This
 page maps them. Counts and paths come from the family pages, which cite the
@@ -25,10 +25,13 @@ mouse `.X` is clipped at 10 and scaled per gene
 ([F09](experiments/F09-hub-and-metrics-infrastructure.md),
 [F10](experiments/F10-monocytes-floor-ceiling-and-v08.md)):
 
-1. **Orthologs.** BioMart one-to-one pairs: 14,451. The table is pinned only
-   in git history, at `conny@c342331:scripts/.biomart_ortholog_cache.csv`.
-2. **Assay filter** (v08 onward). Keep mouse 10x 3' v2 and human 10x 3' v3
-   cells only.
+1. **Assay filter.** Keep mouse 10x 3' v2 and human 10x 3' v3 cells only. It
+   was first used for the May deployment set (notebook 15), and it is standard
+   in every v08 cut ([F16](experiments/F16-deployment-models-and-mixhvg.md)).
+2. **Orthologs.** BioMart one-to-one pairs: 14,451. The table survives in git
+   history (`conny@c342331:scripts/.biomart_ortholog_cache.csv`). A
+   four-column copy with the same rows is
+   `fasrc:BK/cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/gene_lists/pre_hvg_one2one_orthologs.csv`.
 3. **Cell matching.** Josh's ontology matcher keeps equal mouse and human
    counts per (cell type, tissue) pair, with seed 0
    ([F03](experiments/F03-labels-ontology-and-distances.md)).
@@ -40,9 +43,12 @@ mouse `.X` is clipped at 10 and scaled per gene
    non-held-out cells only from May 2026 (decided on 2026-04-30); before that,
    held-out cells leaked in ([F06](experiments/F06-tcell-holdouts-speciesot-v1.md)).
    The flavor choice is covered in [F08](experiments/F08-hvg-flavor-matrix.md).
-6. **Split.** `toggle_ood` on held-out cell types: `test_size` 0.2, seed 0,
-   stratified by species from v08 on.
-7. **Write** for anndata 0.7 (the `_v07` suffix).
+6. **Write** in a format anndata 0.7 can read. Older files carry a `_v07`
+   suffix; v08 files are named `_v08`.
+
+The **split** is not a prep step: CellOT's `toggle_ood` makes it at training
+time from the config. It holds out cell types, with `test_size` 0.2 and seed
+0, and from v08 on it is stratified by species.
 
 **Versions:**
 
@@ -54,7 +60,7 @@ mouse `.X` is clipped at 10 and scaled per gene
 | capped M1 / M2 v07 | May 2026 | same pool | monocyte holdouts | [F10](experiments/F10-monocytes-floor-ceiling-and-v08.md) |
 | uncapped CD8 (v07) | 2026-05-26 → | full atlases | about 124,886 instead of 12,990 cells | [F10](experiments/F10-monocytes-floor-ceiling-and-v08.md) |
 | **v08** M1, M2, CD8-uncapped (the "frozen benchmark") | from 2026-06-05 | capped samples (M1, M2: 8,054 cells) or full atlases (CD8: 89,760 cells, 44,880 pairs) | assay filter + species-stratified split | [F10](experiments/F10-monocytes-floor-ceiling-and-v08.md), [F14](experiments/F14-july-plans-a-to-d.md), [F15](experiments/F15-ae-repair-rounds-and-calibration.md), [F16](experiments/F16-deployment-models-and-mixhvg.md) |
-| deployment sets `atlas_full` (v07), `*_uncapped_v08_iid`, `*_uncapped_v08` | May → 2026-08-18 | as above, no held-out type (or the iid twin) | used on BCG; never validated on the atlas | [F16](experiments/F16-deployment-models-and-mixhvg.md) |
+| deployment sets `atlas_full` (v07), `*_uncapped_v08_iid`, `*_uncapped_v08` | May → 2026-08-18 | as above: no held-out type, or for the iid twins CD8 held out | `atlas_full_v07` and `*_uncapped_v08_iid` were used on BCG; `*_uncapped_v08` was never used. None was scored against a floor, ceiling or identity baseline | [F16](experiments/F16-deployment-models-and-mixhvg.md) |
 
 The full per-cut table (cells, held-out cells, scored cells) is in
 [F10](experiments/F10-monocytes-floor-ceiling-and-v08.md), "Setup".
@@ -74,7 +80,7 @@ unstimulated (`unst`) or after 6 h of LPS (`LPS6`).
 | file | what it is | used in |
 |---|---|---|
 | `train_species.h5ad` (`fasrc:BK/scgen-cellot-ablation/data/raw/`; also kept as `hvg-top1k-train-only.6619-backup.h5ad`) | scGen authors' training file: 62,114 cells × 6,619 one-to-one orthologs. With the validation file (15,528 cells) this is the paper's 77,642. | [F05](experiments/F05-first-cellot-runs-on-lps.md), [F12](experiments/F12-scgen-fig5-stage0-and-stage1.md), [F13](experiments/F13-autoresearch-loop.md), [F15](experiments/F15-ae-repair-rounds-and-calibration.md) |
-| `hvg-top1k-train-only.h5ad` (`fasrc:BK/cellot/cellot_gpu/datasets/scrna-crossspecies/`) | A local cut to 1,000 HVGs (seurat flavor, all cells) for the CellOT-paper task. It is not the CellOT authors' own file. | [F11](experiments/F11-bunne-lps-replication.md) |
+| `hvg-top1k-train-only.h5ad` (`fasrc:BK/cellot/cellot_gpu/datasets/scrna-crossspecies/`) | A local cut to 1,000 HVGs (seurat flavor, all cells) for the CellOT-paper task. It is not the CellOT authors' own file. Until 2026-06-12 a file of this name held all 6,619 genes ([F11](experiments/F11-bunne-lps-replication.md)). | [F11](experiments/F11-bunne-lps-replication.md) |
 | Stage 1 arms A–D and the G250–G4000 arms (`fasrc:BK/scgen-cellot-ablation/data/processed/arms/`) | The same cells, with two splits and several gene sets | [F12](experiments/F12-scgen-fig5-stage0-and-stage1.md), [F13](experiments/F13-autoresearch-loop.md) |
 
 The two splits are explained in the [glossary](glossary.md). In the scGen
@@ -90,8 +96,10 @@ rat cell is.
 
 All of it is in Josh's folder `fasrc:JOSH/tb/data/`, which is outside the
 backup. Batch-corrected (scANVI) files carry date tags: `080526`, `081826`,
-`082626`. Model predictions are in
+`082626`. Conny's model predictions are in
 `fasrc:BK/cellot/cellot_gpu/datasets/speciesot-human-mouse-hvg/bcg_*`.
+Josh's tb3 predictions are in
+`fasrc:JOSH/tb/data/mouse_bcg/predictions_080526/`.
 
 Known problems ([F17](experiments/F17-bcg-application.md)):
 
@@ -123,5 +131,6 @@ lists them among the package's open decisions.
 - Which normalization, and on which gene universe: normalize over the 14,451
   orthologs, then take the 1,000 HVGs. External data such as BCG must be
   treated the same way ([F16](experiments/F16-deployment-models-and-mixhvg.md)).
-- How large files are read: the full human atlas is 45 GB, and the e24 test
-  files alone are 7.7 GB ([F18](experiments/F18-oop-package.md)).
+- How large files are read: the full human atlas is 45 GB, and the two Tabula
+  training samples in Josh's e24 example are 7.7 GB together
+  ([F18](experiments/F18-oop-package.md)).
