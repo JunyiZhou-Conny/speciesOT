@@ -17,6 +17,7 @@ Only the species leg is implemented today; see
 
 | you want to… | read |
 |---|---|
+| know what was tried, what held up, and what the package must reproduce (checked against the result files; supersedes older summaries where they disagree) | [`docs/archaeology/README.md`](docs/archaeology/README.md) |
 | run a prediction on new mouse data | [`docs/mentor_runbook.md`](docs/mentor_runbook.md) |
 | understand the science and the metrics | [`docs/conceptual_framework.md`](docs/conceptual_framework.md) |
 | use the CLI | [`docs/hub_usage.md`](docs/hub_usage.md) |
